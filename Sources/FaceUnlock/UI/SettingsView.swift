@@ -204,6 +204,19 @@ struct SettingsView: View {
             }
             .disabled(!settings.faceUnlockEnabled)
 
+            VStack(alignment: .leading) {
+                HStack {
+                    Text("인식 제한 시간")
+                    Spacer()
+                    Text("\(Int(settings.recognitionTimeout))초")
+                        .monospacedDigit().foregroundStyle(.secondary)
+                }
+                Slider(value: $settings.recognitionTimeout, in: 5...60, step: 5)
+                Text("이 시간이 지나면 포기하고 비밀번호 입력으로 넘어갑니다.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .disabled(!settings.faceUnlockEnabled)
+
             Toggle("로그인 시 자동 실행", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
         }

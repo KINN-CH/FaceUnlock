@@ -24,14 +24,36 @@ enum SelfTest {
         var failures = 0
         failures += transformResidualTest()
         failures += renderOrientationTest()
+        failures += lockGuardTest()
 
         print("")
         if failures == 0 {
-            print("✅ 자체 검증 통과 — 정렬 기하와 상하 방향이 모두 정상입니다.")
+            print("✅ 자체 검증 통과 — 안전 가드, 정렬 기하, 상하 방향 모두 정상입니다.")
         } else {
             print("❌ 실패 \(failures)건 — 위 출력을 확인하세요.")
         }
         return failures == 0 ? 0 : 1
+    }
+
+    // MARK: 0. 안전 가드
+
+    /// **이 프로젝트 최악의 실패 모드에 대한 회귀 테스트.**
+    ///
+    /// `screenIsLockedNow()` 가 잘못해서 `true` 를 돌려주면, 잠기지 않은 화면에
+    /// 로그인 비밀번호가 그대로 타이핑된다 — 열려 있던 터미널·채팅창·문서에.
+    /// 이 테스트는 터미널에서(= 화면이 풀린 상태에서) 돌기 때문에 반드시 `false`
+    /// 여야 한다. 누가 이 함수를 "판단 불가 시 true" 로 바꾸면 여기서 걸린다.
+    private static func lockGuardTest() -> Int {
+        print("")
+        print("▶ 잠금 가드 검사")
+
+        let locked = LockMonitor.screenIsLockedNow()
+        if locked {
+            print("  ❌ 화면이 풀린 상태인데 잠김으로 보고했습니다 — 주입 가드가 무력화됩니다")
+            return 1
+        }
+        print("  ✅ 풀린 화면을 잠기지 않음으로 정확히 보고 (주입 차단됨)")
+        return 0
     }
 
     // MARK: 1. 변환 정확도
@@ -194,5 +216,50 @@ enum SelfTest {
         }
         guard count > 0 else { return nil }
         return CGPoint(x: sumX / count, y: sumY / count)
+    }
+}
+
+// MARK: - 전처리 교차 검증
+
+/// Swift 쪽 전처리(RGB 채널 순서, NCHW 배치, (x−127.5)/127.5)가 변환 스크립트의
+/// Python 전처리와 **바이트 단위로 같은지** 확인하기 위한 결정적 입력.
+///
+/// 채널을 뒤바꾸거나 NCHW/NHWC 를 착각해도 CoreML 은 에러를 내지 않는다.
+/// 그냥 조용히 다른 임베딩이 나올 뿐이라, 실사용에서는 "얼굴은 잡히는데 절대
+/// 일치하지 않는" 증상으로만 드러난다. 그래서 여기서 못 박아둔다.
+enum PreprocessFixture {
+    static let size = 112
+
+    static func pixelsRGBA() -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: size * size * 4)
+        for y in 0..<size {
+            for x in 0..<size {
+                let i = (y * size + x) * 4
+                out[i + 0] = UInt8((x &* 7  &+ y &* 13)        % 256)
+                out[i + 1] = UInt8((x &* 3  &+ y &* 29 &+ 11)  % 256)
+                out[i + 2] = UInt8((x &* 17 &+ y &* 5  &+ 200) % 256)
+                out[i + 3] = 255
+            }
+        }
+        return out
+    }
+}
+
+extension SelfTest {
+    /// 고정 입력의 임베딩을 stdout 으로 뱉는다. Python 쪽 결과와 대조한다.
+    static func dumpFixtureEmbedding() -> Int32 {
+        let model: EmbeddingModel
+        do {
+            model = try EmbeddingModel()
+        } catch {
+            FileHandle.standardError.write(Data("모델을 열 수 없습니다 (\(error)). FACEUNLOCK_MODEL 을 확인하세요.\n".utf8))
+            return 1
+        }
+        guard let vector = model.embed(alignedRGBA: PreprocessFixture.pixelsRGBA()) else {
+            FileHandle.standardError.write(Data("추론 실패\n".utf8))
+            return 1
+        }
+        print(vector.map { String(format: "%.6f", $0) }.joined(separator: ","))
+        return 0
     }
 }

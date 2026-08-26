@@ -88,61 +88,123 @@ def extract_onnx(zip_path: Path) -> Path:
     return onnx_path
 
 
-def convert(onnx_path: Path) -> None:
-    # coremltools 6+ 는 ONNX 를 직접 못 읽는다. onnx2torch 로 PyTorch 모듈로 바꾼 뒤
-    # TorchScript 로 trace 해서 변환한다.
+def build_one(onnx_path: Path, precision_name: str, out_path: Path) -> float:
+    """한 가지 정밀도로 변환해 저장하고, PyTorch 출력과의 코사인 유사도를 돌려준다.
+
+    **반드시 별도 프로세스에서 호출해야 한다.** 한 프로세스에서 ct.convert 를 두 번
+    부르면 coremltools 의 fp16 패스가 GIL 을 놓친 채로 죽는다 (torch 2.13 조합).
+    """
     import numpy as np
     import torch
     import coremltools as ct
     from onnx2torch import convert as onnx_to_torch
 
-    log("ONNX → PyTorch 변환 중…")
     model = onnx_to_torch(str(onnx_path)).eval()
 
-    example = torch.randn(*INPUT_SHAPE)
+    # 프로세스가 달라도 같은 입력이 나와야 비교가 성립한다.
+    # 실제 입력 분포와 비슷하게: 정규화 후 픽셀은 대략 [-1, 1] 범위다.
+    torch.manual_seed(0)
+    example = torch.rand(*INPUT_SHAPE) * 2 - 1
     with torch.no_grad():
-        ref = model(example)
-    ref = ref.detach().numpy()
+        ref = model(example).detach().numpy().reshape(-1)
     if ref.shape[-1] != EMBED_DIM:
         raise SystemExit(f"임베딩 차원이 {EMBED_DIM} 이 아닙니다: {ref.shape}")
-    log(f"PyTorch 출력 확인: {ref.shape}")
 
-    log("TorchScript trace 중…")
     traced = torch.jit.trace(model, example, strict=False)
+    precision = getattr(ct.precision, precision_name)
 
-    log("CoreML 변환 중… (몇 분 걸릴 수 있습니다)")
     mlmodel = ct.convert(
         traced,
         convert_to="mlprogram",
         inputs=[ct.TensorType(name="input", shape=INPUT_SHAPE, dtype=np.float32)],
         outputs=[ct.TensorType(name="embedding", dtype=np.float32)],
-        compute_precision=ct.precision.FLOAT16,
+        compute_precision=precision,
         minimum_deployment_target=ct.target.macOS14,
     )
     mlmodel.short_description = (
-        "ArcFace (InsightFace buffalo_l / w600k_r50). "
+        f"ArcFace (InsightFace buffalo_l / w600k_r50), {precision_name}. "
         "Input: (RGB - 127.5) / 127.5, NCHW 1x3x112x112. Output: 512-d embedding."
     )
+    if out_path.exists():
+        shutil.rmtree(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    mlmodel.save(str(out_path))
+
+    got = np.asarray(mlmodel.predict({"input": example.numpy()})["embedding"]).reshape(-1)
+    return float(ref @ got / (np.linalg.norm(ref) * np.linalg.norm(got)))
+
+
+def build_in_subprocess(onnx_path: Path, precision_name: str) -> tuple[Path, float]:
+    import math
+    import subprocess
+
+    out_path = CACHE / f"ArcFace-{precision_name}.mlpackage"
+    log(f"CoreML 변환 중 ({precision_name})… 몇 분 걸릴 수 있습니다")
+
+    result = subprocess.run(
+        [sys.executable, __file__, "--build", precision_name, str(onnx_path), str(out_path)],
+        capture_output=True, text=True,
+    )
+    marker = "COSINE="
+    line = next((l for l in result.stdout.splitlines() if l.startswith(marker)), None)
+    if line is None:
+        sys.stderr.write(result.stdout[-2000:])
+        sys.stderr.write(result.stderr[-2000:])
+        raise SystemExit(f"{precision_name} 변환 실패 (종료 코드 {result.returncode})")
+
+    cos = float(line[len(marker):])
+    angle = math.degrees(math.acos(min(1.0, cos)))
+    log(f"  {precision_name}: cos={cos:.6f}  (임베딩 편차 {angle:.2f}°)")
+    return out_path, cos
+
+
+def convert(onnx_path: Path) -> None:
+    # 1단계 — FLOAT32 로 **구조적 정확성**을 확인한다.
+    #   레이어 누락·transpose 실수 같은 진짜 변환 버그는 여기서 cos 가 0 근처로 떨어진다.
+    #   양자화 오차가 섞이지 않으므로 기준을 아주 빡빡하게 잡을 수 있다.
+    fp32_path, cos32 = build_in_subprocess(onnx_path, "FLOAT32")
+    if cos32 < 0.9999:
+        raise SystemExit(
+            f"변환이 구조적으로 잘못되었습니다 (FLOAT32 cos={cos32:.6f}).\n"
+            "onnx2torch / coremltools 버전을 확인하세요."
+        )
+    log("✅ 구조 검증 통과 — 변환된 그래프가 원본과 동일합니다")
+
+    # 2단계 — FLOAT16 은 **얼마나 손해인지**만 본다.
+    #   Apple Neural Engine 은 어차피 내부적으로 FP16 으로 돈다. 등록과 인증이 같은
+    #   모델을 쓰므로 양자화 편향은 양쪽에서 상쇄된다. 문제는 편차가 판정 여유
+    #   (임계 0.48 ≈ 61°) 를 갉아먹을 만큼 큰가인데, 몇 도 수준이면 무시할 만하다.
+    FP16_MIN = 0.995   # ≈ 5.7°. 61° 의 판정 여유에 비하면 미미하다.
+    try:
+        fp16_path, cos16 = build_in_subprocess(onnx_path, "FLOAT16")
+    except SystemExit as exc:
+        log(f"FLOAT16 변환 실패 ({exc}) — FLOAT32 를 씁니다")
+        fp16_path, cos16 = None, 0.0
+
+    if fp16_path is not None and cos16 >= FP16_MIN:
+        chosen, label = fp16_path, "FLOAT16"
+        log("FLOAT16 채택 — Neural Engine 에서 가장 빠르고 편차도 무시할 수준입니다")
+    else:
+        chosen, label = fp32_path, "FLOAT32"
+        log("FLOAT32 채택 — 정확하지만 FLOAT16 보다 느리고 큽니다")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     if OUT.exists():
         shutil.rmtree(OUT)
-    mlmodel.save(str(OUT))
-    log(f"저장됨: {OUT}")
+    shutil.copytree(chosen, OUT)
 
-    # 변환이 수치적으로 맞는지 확인한다. 여기서 어긋나면 인식이 통째로 무의미해진다.
-    log("CoreML 출력과 PyTorch 출력 대조 중…")
-    got = mlmodel.predict({"input": example.numpy()})["embedding"]
-    a = ref.reshape(-1)
-    b = np.asarray(got).reshape(-1)
-    cos = float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b)))
-    log(f"코사인 유사도(PyTorch vs CoreML) = {cos:.6f}")
-    if cos < 0.999:
-        raise SystemExit(f"변환 오차가 큽니다 (cos={cos:.6f}). FLOAT32 로 재시도해 보세요.")
-    log("✅ 변환 검증 통과")
+    size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
+    log(f"저장됨: {OUT} ({size / 1e6:.1f} MB, {label})")
 
 
 def main() -> None:
+    # 서브프로세스 모드: 한 정밀도만 변환하고 결과를 stdout 으로 알린다.
+    if len(sys.argv) > 1 and sys.argv[1] == "--build":
+        _, _, precision_name, onnx, out = sys.argv
+        cos = build_one(Path(onnx), precision_name, Path(out))
+        print(f"COSINE={cos:.8f}")
+        return
+
     CACHE.mkdir(parents=True, exist_ok=True)
     zip_path = download(PACK_URL, CACHE / PACK_NAME)
     onnx_path = extract_onnx(zip_path)

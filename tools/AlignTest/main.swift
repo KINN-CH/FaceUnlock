@@ -22,6 +22,11 @@ if arguments.first == "--selftest" {
     exit(SelfTest.run())
 }
 
+// 전처리 교차 검증용 — 고정 입력의 임베딩만 출력한다.
+if arguments.first == "--dump-fixture" {
+    exit(SelfTest.dumpFixtureEmbedding())
+}
+
 guard !arguments.isEmpty else {
     print("사용법: aligntest <이미지> [<이미지> ...]")
     print("        aligntest --selftest      # 사진 없이 정렬 기하/방향 검증")

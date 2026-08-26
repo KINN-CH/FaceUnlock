@@ -49,7 +49,8 @@ ALIGNTEST_SRCS := Tools/AlignTest/main.swift Tools/AlignTest/SelfTest.swift \
     Sources/FaceUnlock/Core/FaceGeometry.swift \
     Sources/FaceUnlock/Core/FaceDetector.swift \
     Sources/FaceUnlock/Core/FaceAligner.swift \
-    Sources/FaceUnlock/Core/EmbeddingModel.swift
+    Sources/FaceUnlock/Core/EmbeddingModel.swift \
+    Sources/FaceUnlock/Core/LockMonitor.swift
 
 aligntest: $(ALIGNTEST_SRCS)
 	@mkdir -p $(BUILD_DIR)
@@ -62,6 +63,12 @@ aligntest: $(ALIGNTEST_SRCS)
 model:
 	@./scripts/setup_model_env.sh
 	@.venv/bin/python tools/fetch_arcface.py
+
+# Swift 전처리 ↔ 원본 ONNX 교차 검증. `make model` 이후 한 번은 돌려야 한다.
+xcheck: aligntest
+	@FACEUNLOCK_MODEL=Resources/Models/ArcFace.mlpackage \
+	    ./build/aligntest --dump-fixture > build/swift_embed.txt
+	@.venv/bin/python tools/verify_preprocessing.py
 
 check:
 	@codesign -dv --entitlements - $(APP_BUNDLE) 2>&1 | head -20

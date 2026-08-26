@@ -39,6 +39,12 @@ enum Unlocker {
     /// 무한 재시도는 계정 잠금으로 이어질 수 있다.
     @discardableResult
     static func unlock(allowRetry: Bool = true) -> Result<Void, Failure> {
+        // 잠금 확인이 가장 앞이다. 다른 가드보다 뒤에 두면 그 가드들이 먼저 반환할 때
+        // 잠금 확인이 아예 실행되지 않아, 정작 제일 중요한 검사가 조건부가 되어버린다.
+        guard LockMonitor.screenIsLockedNow() else {
+            Log.unlock.error("잠금 상태가 아님 — 주입 중단")
+            return .failure(.notLocked)
+        }
         guard Permissions.hasAccessibility else {
             Log.unlock.error("손쉬운 사용 권한 없음 — 주입 중단")
             return .failure(.noAccessibility)
@@ -46,10 +52,6 @@ enum Unlocker {
         guard Vault.hasPassword else {
             Log.unlock.error("저장된 비밀번호 없음")
             return .failure(.noPassword)
-        }
-        guard LockMonitor.screenIsLockedNow() else {
-            Log.unlock.error("잠금 상태가 아님 — 주입 중단")
-            return .failure(.notLocked)
         }
 
         wakeDisplay()
