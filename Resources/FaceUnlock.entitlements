@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 샌드박스는 켜지 않는다: Accessibility 이벤트 주입과 dscl 호출이 불가능해진다.
+         keychain-access-groups 는 Team ID 접두사가 필요해서 ad-hoc 서명에서는 쓸 수 없다
+         (launchd 가 spawn 을 거부한다). 비샌드박스 앱은 그룹 지정 없이도 SecItem 을 쓴다. -->
+    <key>com.apple.security.device.camera</key> <true/>
+</dict>
+</plist>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>                 <string>FaceUnlock</string>
+    <key>CFBundleDisplayName</key>          <string>FaceUnlock</string>
+    <key>CFBundleIdentifier</key>           <string>io.github.kinnch.FaceUnlock</string>
+    <key>CFBundleExecutable</key>           <string>FaceUnlock</string>
+    <key>CFBundlePackageType</key>          <string>APPL</string>
+    <key>CFBundleShortVersionString</key>   <string>0.1.0</string>
+    <key>CFBundleVersion</key>              <string>1</string>
+    <key>LSMinimumSystemVersion</key>       <string>14.0</string>
+
+    <!-- 메뉴바 전용: Dock 아이콘 없음 -->
+    <key>LSUIElement</key>                  <true/>
+
+    <key>NSCameraUsageDescription</key>
+    <string>잠금 화면에서 등록된 얼굴을 인식해 Mac 잠금을 해제하기 위해 카메라를 사용합니다. 영상은 기기 밖으로 나가지 않으며 저장되지 않습니다.</string>
+
+    <key>NSHumanReadableCopyright</key>
+    <string>MIT License. Provided AS IS, without warranty of any kind.</string>
+</dict>
+</plist>

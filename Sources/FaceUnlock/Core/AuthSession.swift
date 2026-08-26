@@ -1,0 +1,208 @@
+import CoreVideo
+import Foundation
+import QuartzCore
+import Vision
+
+/// 한 번의 잠금 동안 진행되는 인증 세션.
+///
+/// 카메라 프레임 → 검출 → 정렬 → 임베딩 → 매칭 → 깜빡임 → 결과.
+/// 모든 무거운 작업은 카메라 큐에서 돌고, 콜백만 메인으로 올린다.
+///
+/// 성공/실패 콜백은 **정확히 한 번만** 불린다.
+final class AuthSession {
+
+    enum Progress {
+        case searching                    // 얼굴이 안 보임
+        case faceDetected                 // 얼굴은 있으나 아직 불일치
+        case matching(score: Float)       // 일치 진행 중 (연속 카운트 채우는 중)
+        case blinkChallenge               // 얼굴 확인됨. 깜빡임 대기
+        case verifying                    // 깜빡임 직후 재확인
+    }
+
+    enum Outcome {
+        case authenticated
+        case timedOut
+        case cancelled
+        case failed(String)
+    }
+
+    struct Config {
+        var threshold: Float = 0.48
+        /// 우연한 한 프레임 일치로 열리지 않도록 연속 일치를 요구한다.
+        var requiredConsecutiveMatches = 3
+        var requireBlink = true
+        var timeout: TimeInterval = 20
+        var blinkTimeout: TimeInterval = 8
+    }
+
+    var onProgress: ((Progress) -> Void)?
+    var onOutcome: ((Outcome) -> Void)?
+
+    private enum Phase {
+        case identifying
+        case awaitingBlink(deadline: CFTimeInterval)
+        case verifyingAfterBlink
+        case finished
+    }
+
+    private let profile: FaceProfile
+    private let model: EmbeddingModel
+    private let config: Config
+
+    private let detector = FaceDetector()
+    private let aligner = FaceAligner()
+    private let blink = BlinkDetector()
+
+    private var phase: Phase = .identifying
+    private var consecutiveMatches = 0
+    private var deadline: CFTimeInterval = 0
+    private var lastProgress: String = ""
+
+    init(profile: FaceProfile, model: EmbeddingModel, config: Config) {
+        self.profile = profile
+        self.model = model
+        self.config = config
+    }
+
+    func begin() {
+        deadline = CACurrentMediaTime() + config.timeout
+        phase = .identifying
+        consecutiveMatches = 0
+        blink.reset()
+    }
+
+    func cancel() {
+        if case .finished = phase { return }
+        finish(.cancelled)
+    }
+
+    // MARK: 프레임 처리 (카메라 큐)
+
+    func process(frame pixelBuffer: CVPixelBuffer) {
+        if case .finished = phase { return }
+        handle(frame: pixelBuffer)
+    }
+
+    private func handle(frame pixelBuffer: CVPixelBuffer) {
+        let now = CACurrentMediaTime()
+        guard now < deadline else {
+            Log.face.info("인증 시간 초과")
+            finish(.timedOut)
+            return
+        }
+
+        guard let face = detector.detectPrimaryFace(in: pixelBuffer) else {
+            report(.searching)
+            // 얼굴이 사라지면 연속 카운트를 버린다. 다른 사람으로 바꿔치는 걸 막는다.
+            consecutiveMatches = 0
+            blink.reset()
+            return
+        }
+
+        guard detector.passesQualityGate(face, in: pixelBuffer) else {
+            report(.faceDetected)
+            consecutiveMatches = 0
+            return
+        }
+
+        switch phase {
+        case .identifying:
+            identify(face: face, in: pixelBuffer)
+
+        case .awaitingBlink(let blinkDeadline):
+            if now > blinkDeadline {
+                Log.face.info("깜빡임 대기 시간 초과")
+                finish(.failed("깜빡임이 감지되지 않았습니다"))
+                return
+            }
+            report(.blinkChallenge)
+            if case .blinked = blink.process(face, at: now) {
+                phase = .verifyingAfterBlink
+            }
+
+        case .verifyingAfterBlink:
+            // 눈 감긴 사이 얼굴이 바뀌었을 수 있으므로 한 번 더 확인한다.
+            report(.verifying)
+            guard let result = embedAndMatch(face: face, in: pixelBuffer) else {
+                phase = .identifying
+                consecutiveMatches = 0
+                return
+            }
+            if result.passes(threshold: config.threshold) {
+                Log.face.info("깜빡임 후 재확인 통과")
+                finish(.authenticated)
+            } else {
+                Log.face.error("깜빡임 후 재확인 실패 — 처음부터 다시")
+                phase = .identifying
+                consecutiveMatches = 0
+                blink.reset()
+            }
+
+        case .finished:
+            break
+        }
+    }
+
+    private func identify(face: VNFaceObservation, in pixelBuffer: CVPixelBuffer) {
+        guard let result = embedAndMatch(face: face, in: pixelBuffer) else {
+            report(.faceDetected)
+            consecutiveMatches = 0
+            return
+        }
+
+        guard result.passes(threshold: config.threshold) else {
+            consecutiveMatches = 0
+            report(.faceDetected)
+            return
+        }
+
+        consecutiveMatches += 1
+        report(.matching(score: result.score))
+
+        guard consecutiveMatches >= config.requiredConsecutiveMatches else { return }
+
+        if config.requireBlink {
+            Log.face.info("얼굴 일치 — 깜빡임 대기 시작")
+            blink.reset()
+            phase = .awaitingBlink(deadline: CACurrentMediaTime() + config.blinkTimeout)
+            report(.blinkChallenge)
+        } else {
+            Log.face.info("얼굴 일치 (깜빡임 확인 없음)")
+            finish(.authenticated)
+        }
+    }
+
+    private func embedAndMatch(face: VNFaceObservation, in pixelBuffer: CVPixelBuffer) -> MatchResult? {
+        guard let pixels = aligner.alignedPixels(from: pixelBuffer, observation: face),
+              let vector = model.embed(alignedRGBA: pixels) else { return nil }
+        return profile.match(vector)
+    }
+
+    // MARK: 콜백
+
+    /// 같은 진행 상태를 매 프레임 올리면 UI 가 계속 갱신된다. 바뀔 때만 보낸다.
+    private func report(_ progress: Progress) {
+        let key: String
+        switch progress {
+        case .searching:      key = "searching"
+        case .faceDetected:   key = "face"
+        case .matching:       key = "matching"
+        case .blinkChallenge: key = "blink"
+        case .verifying:      key = "verify"
+        }
+        guard key != lastProgress else { return }
+        lastProgress = key
+
+        DispatchQueue.main.async { [weak self] in
+            self?.onProgress?(progress)
+        }
+    }
+
+    private func finish(_ outcome: Outcome) {
+        if case .finished = phase { return }   // 결과는 정확히 한 번만 통지한다
+        phase = .finished
+        DispatchQueue.main.async { [weak self] in
+            self?.onOutcome?(outcome)
+        }
+    }
+}

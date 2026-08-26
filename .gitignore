@@ -1,0 +1,14 @@
+build/
+dist/
+*.dmg
+.venv/
+__pycache__/
+
+# ArcFace 가중치는 InsightFace 비상업 연구용 라이선스라 저장소에 넣지 않는다.
+# tools/fetch_arcface.py 로 각자 내려받는다.
+Resources/Models/
+*.mlpackage
+*.mlmodelc
+*.onnx
+
+.DS_Store
