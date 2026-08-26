@@ -13,7 +13,7 @@ RES_DIR    := $(CONTENTS)/Resources
 SOURCES    := $(shell find Sources -name '*.swift')
 SWIFT_OPTS := -parse-as-library -target $(TARGET) -swift-version 5
 
-.PHONY: all debug release run clean install sign check aligntest model
+.PHONY: all debug release run clean install sign check aligntest model dmg
 
 all: debug
 
@@ -79,6 +79,21 @@ install: release
 	@rm -rf /Applications/$(APP_NAME).app
 	@cp -R $(APP_BUNDLE) /Applications/
 	@echo "==> installed to /Applications/$(APP_NAME).app"
+
+# 배포용 DMG. 공증(notarization)이 없으므로 받는 쪽에서 quarantine 을 풀어야 한다.
+# README 의 설치 안내를 함께 읽도록 DMG 안에 넣어 둔다.
+DIST_DIR := dist
+dmg: release
+	@rm -rf $(DIST_DIR)/staging $(DIST_DIR)/$(APP_NAME).dmg
+	@mkdir -p $(DIST_DIR)/staging
+	@cp -R $(APP_BUNDLE) $(DIST_DIR)/staging/
+	@ln -s /Applications $(DIST_DIR)/staging/Applications
+	@cp README.md $(DIST_DIR)/staging/'먼저 읽어주세요.md'
+	@hdiutil create -quiet -volname "$(APP_NAME)" -srcfolder $(DIST_DIR)/staging \
+	    -ov -format UDZO $(DIST_DIR)/$(APP_NAME).dmg
+	@rm -rf $(DIST_DIR)/staging
+	@echo "==> $(DIST_DIR)/$(APP_NAME).dmg"
+	@echo "    주의: 공증 없음. 받는 쪽에서 xattr -dr com.apple.quarantine 필요"
 
 clean:
 	@rm -rf $(BUILD_DIR)
