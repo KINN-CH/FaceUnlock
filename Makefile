@@ -13,7 +13,7 @@ RES_DIR    := $(CONTENTS)/Resources
 SOURCES    := $(shell find Sources -name '*.swift')
 SWIFT_OPTS := -parse-as-library -target $(TARGET) -swift-version 5
 
-.PHONY: all debug release run clean install sign check aligntest
+.PHONY: all debug release run clean install sign check aligntest model
 
 all: debug
 
@@ -56,6 +56,12 @@ aligntest: $(ALIGNTEST_SRCS)
 	swiftc -target $(TARGET) -swift-version 5 -Onone -g \
 	    -o $(BUILD_DIR)/aligntest $(ALIGNTEST_SRCS)
 	@echo "==> built $(BUILD_DIR)/aligntest"
+
+# ArcFace 모델 준비. 외부에서 가중치를 내려받으므로 최초 1회만 수동으로 실행한다.
+#   가중치는 InsightFace 비상업 연구용 라이선스 — 저장소·배포물에 포함하지 않는다.
+model:
+	@./scripts/setup_model_env.sh
+	@.venv/bin/python tools/fetch_arcface.py
 
 check:
 	@codesign -dv --entitlements - $(APP_BUNDLE) 2>&1 | head -20

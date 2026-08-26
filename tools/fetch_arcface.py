@@ -7,9 +7,14 @@ ArcFace 얼굴 임베딩 모델을 내려받아 CoreML(.mlpackage)로 변환한�
     각자 원본 배포처에서 받도록 한다.
 
 사용법:
-    python3 -m venv .venv && source .venv/bin/activate
-    pip install torch onnx onnx2torch coremltools numpy pillow
-    python3 tools/fetch_arcface.py
+    make model          # venv 생성 → 의존성 설치 → 변환까지 한 번에
+
+    직접 하려면 (coremltools 는 Python 3.14 를 아직 지원하지 않는다 — 3.11/3.12 필요):
+        /opt/homebrew/opt/python@3.11/bin/python3.11 -m venv .venv
+        .venv/bin/pip install torch onnx onnx2torch coremltools numpy pillow
+        .venv/bin/python tools/fetch_arcface.py
+
+    변환이 끝나면 .venv 는 지워도 앱 동작에는 영향이 없다 (빌드 타임 도구일 뿐).
 
 결과:
     Resources/Models/ArcFace.mlpackage
