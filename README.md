@@ -162,7 +162,8 @@ xattr -dr com.apple.quarantine /Applications/FaceUnlock.app
 make debug        # 빌드 + ad-hoc 서명
 make run          # 빌드 후 실행
 make log          # 로그 스트림 (비밀번호·임베딩은 절대 찍지 않습니다)
-make aligntest && ./build/aligntest --selftest    # 정렬 기하·상하 방향 검증
+make aligntest && ./build/aligntest --selftest    # 안전 가드·정렬 기하·상하 방향 검증
+make xcheck       # Swift 전처리 ↔ 원본 ONNX 교차 검증
 ./build/aligntest a.jpg b.jpg                      # 두 사진의 유사도 비교
 make release      # 최적화 빌드
 make clean
@@ -173,6 +174,24 @@ make clean
 이걸 자동으로 잡아내려고 만들었습니다.
 
 ---
+
+### 검증 항목
+
+빌드가 통과한다고 동작이 맞는 건 아니라서, 조용히 틀릴 수 있는 곳마다 검사를 걸어두었습니다.
+
+| 검사 | 무엇이 틀리면 잡히나 | 실행 |
+|------|---------------------|------|
+| 잠금 가드 | `screenIsLockedNow()` 가 풀린 화면을 잠김으로 보고 → **비밀번호가 눈앞에 타이핑됨** | `--selftest` |
+| 유사변환 잔차 | 5점 정렬 수식 오류 | `--selftest` |
+| 렌더 상하 방향 | CoreImage(좌하단 원점) ↔ 비트맵(좌상단 원점) 뒤집힘 | `--selftest` |
+| 전처리 교차 검증 | RGB/BGR 뒤바뀜, NCHW/NHWC 착각, 정규화 상수 오류 | `make xcheck` |
+| 모델 변환 게이트 | 레이어 누락·transpose 실수(FP32 ≥ 0.9999), 양자화 손실(FP16 ≥ 0.995) | `make model` |
+
+가운데 셋은 **에러를 내지 않고 조용히 틀리는** 종류입니다. CoreML 은 채널 순서를 바꿔 넣어도
+군말 없이 512차원 벡터를 돌려주고, 증상은 "얼굴은 잡히는데 절대 일치하지 않는다"로만 나타납니다.
+
+현재 측정값 — 전처리 교차 검증 `cos = 0.9987` (편차 2.92°), 모델 변환 FP32 `cos = 1.000000`,
+FP16 `cos = 0.9976` (3.95°). 판정 임계 0.48 은 각도로 약 61° 이므로 이 정도 편차는 무시할 수준입니다.
 
 ## 알려진 문제
 

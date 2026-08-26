@@ -83,6 +83,17 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
 
         refreshStatus()
+
+        // 시작 진단. 사용자가 "왜 안 되지" 할 때 `make log` 한 줄로 답이 나와야 한다.
+        // 번들 안에 모델이 들어갔는지는 조용히 실패하는 종류라 특히 명시한다.
+        let ready = [
+            "모델 \(modelAvailable ? "있음" : "없음")",
+            "얼굴 \(store.isEnrolled ? "등록됨" : "미등록")",
+            "비밀번호 \(Vault.hasPassword ? "등록됨" : "미등록")",
+            "카메라 권한 \(Permissions.hasCamera ? "허용" : "없음")",
+            "손쉬운 사용 \(Permissions.hasAccessibility ? "허용" : "없음")",
+        ].joined(separator: ", ")
+        Log.app.info("준비 상태 — \(ready, privacy: .public)")
     }
 
     // MARK: 모델
