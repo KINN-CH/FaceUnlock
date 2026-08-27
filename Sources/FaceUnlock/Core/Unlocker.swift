@@ -34,6 +34,12 @@ enum Unlocker {
     }
 
     private static let returnKey: CGKeyCode = 36
+    private static let deleteKey: CGKeyCode = 51
+    private static let aKey: CGKeyCode = 0
+
+    /// Cmd+A 가 먹지 않았을 때를 대비한 지우개 횟수.
+    /// 화면을 깨우려고 키보드를 두드린 정도는 보통 열 자 남짓이라 넉넉하다.
+    private static let clearBackspaces = 32
 
     /// 잠금 해제를 시도한다. 실패하면 1회만 재시도하고 그만둔다.
     /// 무한 재시도는 계정 잠금으로 이어질 수 있다.
@@ -65,6 +71,11 @@ enum Unlocker {
 
         do {
             try typePassword()
+        } catch let failure as Failure {
+            // 사유를 그대로 돌려준다. 특히 .notLocked 는 재시도하면 안 되는
+            // 신호라서 .eventCreationFailed 로 뭉뚱그리면 위험하다.
+            Log.unlock.error("주입 실패: \(failure.localizedDescription, privacy: .public)")
+            return .failure(failure)
         } catch {
             Log.unlock.error("주입 실패")
             return .failure(.eventCreationFailed)
@@ -109,6 +120,18 @@ enum Unlocker {
             throw Failure.eventCreationFailed
         }
 
+        // 여기서 한 번 더 확인하는 이유는 아래 지우기 동작 때문이다.
+        // Cmd+A → Delete 는 **파괴적**이다. 잠금이 풀린 화면으로 새어 나가면
+        // 포커스를 잡고 있던 문서 내용을 통째로 지운다. 호출부에도 확인이
+        // 있지만, 파괴적인 동작 바로 앞에 하나 더 두는 값이 충분히 크다.
+        guard LockMonitor.screenIsLockedNow() else {
+            Log.unlock.error("주입 직전 잠금이 풀림 — 지우기/주입 모두 중단")
+            throw Failure.notLocked
+        }
+
+        // 필드가 비어 있다는 보장이 없다. 아래 clearPasswordField 주석 참조.
+        clearPasswordField(source: source)
+
         // 잠금화면에서는 Keychain 확인 창에 답할 수 없다. 물어보게 두면 여기서
         // 영원히 멈추므로, 물어봐야 하는 상황이면 차라리 즉시 실패시킨다.
         try Vault.withPassword(allowInteraction: false) { units in
@@ -138,5 +161,46 @@ enum Unlocker {
         }
         enterDown.post(tap: .cghidEventTap)
         enterUp.post(tap: .cghidEventTap)
+    }
+
+    // MARK: 비밀번호 칸 비우기
+
+    /// 주입 **직전에** 비밀번호 칸을 비운다.
+    ///
+    /// 사람들은 꺼진 화면을 깨우려고 아무 키나 두드린다. 그 문자는 그대로
+    /// 비밀번호 칸에 남고, 우리가 뒤에 이어 붙이면 `asdf` + 실제 비밀번호가
+    /// 되어 **반드시 틀린다.** 얼굴 인식은 성공했는데 잠금은 안 풀리고,
+    /// 게다가 오입력 횟수만 쌓인다. 비우지 않으면 이 버그는 항상 재현된다.
+    ///
+    /// 두 가지를 겹쳐서 쓴다. 칸의 내용을 읽을 방법이 없어서(Secure Input 이
+    /// 읽기를 막는다) 지워졌는지 확인할 수가 없기 때문이다.
+    ///   1. Cmd+A → Delete — 길이에 상관없이 한 번에 지운다
+    ///   2. Backspace 여러 번 — 1 이 먹지 않았을 때의 보험.
+    ///      빈 칸에서 Backspace 는 아무 일도 하지 않으므로 겹쳐도 해가 없다
+    ///
+    /// 잠금화면에는 비밀번호 칸 말고 포커스를 받을 것이 없으므로 Cmd+A 가
+    /// 엉뚱한 곳에 걸릴 일도 없다.
+    private static func clearPasswordField(source: CGEventSource) {
+        tap(source: source, key: aKey, flags: .maskCommand)
+        tap(source: source, key: deleteKey)
+        for _ in 0..<clearBackspaces {
+            tap(source: source, key: deleteKey)
+        }
+        // 칸이 비워진 걸 반영할 짬을 준다.
+        Thread.sleep(forTimeInterval: 0.06)
+    }
+
+    /// 키 하나를 눌렀다 뗀다. loginwindow 는 너무 빠른 연속 이벤트를 흘리므로
+    /// 사이에 짧은 간격을 둔다.
+    private static func tap(source: CGEventSource, key: CGKeyCode, flags: CGEventFlags = []) {
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else {
+            return
+        }
+        down.flags = flags
+        up.flags = flags
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.005)
     }
 }
