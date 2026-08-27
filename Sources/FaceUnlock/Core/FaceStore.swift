@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 
 /// 등록 때 채워야 하는 포즈 버킷. 한 각도만 등록하면 조금만 고개를 돌려도 인식이 깨진다.
 enum FacePose: String, CaseIterable, Codable {
@@ -134,11 +135,14 @@ final class FaceStore: ObservableObject {
         let url = fileURL
 
         Task.detached(priority: .userInitiated) { [self] in
+            let startedAt = CACurrentMediaTime()
             var loaded: FaceRoster?
             var migrated = false
             do {
                 let sealed = try Data(contentsOf: url)
                 let plain = try EnclaveCrypto.open(sealed)
+                let elapsed = Int((CACurrentMediaTime() - startedAt) * 1000)
+                if elapsed > 1000 { Log.face.info("등록 얼굴 복호화에 \(elapsed)ms 걸렸습니다") }
                 if let roster = try? JSONDecoder().decode(FaceRoster.self, from: plain),
                    roster.version >= 2 {
                     loaded = roster

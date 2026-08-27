@@ -12,7 +12,13 @@ struct MenuBarView: View {
 
         Toggle(T("얼굴로 잠금 해제", "Unlock with Face"), isOn: $settings.faceUnlockEnabled)
 
-        if case .needsSetup(let blocker) = state.status {
+        // 복호화 대기는 사용자가 "설정" 에서 할 일이 없다. 대신 무엇을 기다리는지
+        // 알려준다 — 새 버전을 처음 실행하면 키체인 확인 창이 한 번 뜨는데,
+        // 그 창에 답하기 전까지는 등록 얼굴도 비밀번호도 읽지 못한다.
+        if case .needsSetup(.loadingFaces) = state.status {
+            Text(T("키체인 확인 창이 뜨면 ‘항상 허용’을 눌러 주세요.",
+                   "If a Keychain prompt appears, choose “Always Allow”."))
+        } else if case .needsSetup(let blocker) = state.status {
             Button(T("‘\(blocker.label)’ 설정 열기", "Set up ‘\(blocker.label)’…")) {
                 openSettingsFor(blocker)
             }

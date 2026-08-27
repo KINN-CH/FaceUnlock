@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import QuartzCore
 
 /// Secure Enclave 기반 봉인/개봉.
 ///
@@ -35,7 +36,9 @@ enum EnclaveCrypto {
     /// 유도 과정이 Enclave 안에서 일어나므로 키 자체는 밖으로 나오지 않는다.
     private static func symmetricKey(allowInteraction: Bool) throws -> SymmetricKey {
         if usesSecureEnclave {
+            let startedAt = CACurrentMediaTime()
             let key = try enclaveKey(allowInteraction: allowInteraction)
+            reportSlowKeychainRead(since: startedAt)
             let shared = try key.sharedSecretFromKeyAgreement(with: key.publicKey)
             return shared.hkdfDerivedSymmetricKey(using: SHA256.self,
                                                   salt: Data("FaceUnlock.v1".utf8),
@@ -61,6 +64,23 @@ enum EnclaveCrypto {
         try Keychain.save(key.dataRepresentation, for: .enclaveKey)
         Log.vault.info("Secure Enclave 키 생성됨")
         return key
+    }
+
+    /// 키체인 읽기가 오래 걸렸으면 그 사실만 남긴다.
+    ///
+    /// 보통은 10ms 안쪽이다. 수십 초가 걸렸다면 사용자가 확인 창에 답하기를
+    /// 기다린 시간이다 — 키체인 항목의 접근 허용 목록(XARA 파티션)은 앱의
+    /// **cdhash 로** 적히기 때문에, 새 버전을 처음 실행하면 서명이 달라져
+    /// macOS 가 한 번 물어본다. 지정 요구사항 기반인 ACL 과 달리 이쪽은
+    /// 재빌드를 견디지 못하고, 공개 API 로 미리 채워 넣을 방법도 없다.
+    /// (`kSecUseDataProtectionKeychain` 은 Team ID 가 필요해 자체 서명에서는
+    ///  -34018 로 거부된다. 확인함.)
+    private static func reportSlowKeychainRead(since startedAt: CFTimeInterval) {
+        let elapsed = CACurrentMediaTime() - startedAt
+        guard elapsed > 1 else { return }
+        Log.vault.info("""
+            키체인 읽기에 \(Int(elapsed * 1000))ms 걸렸습니다 —             새 버전 첫 실행이라 접근 확인 창을 기다린 것으로 보입니다.
+            """)
     }
 
     /// Secure Enclave 가 없는 기기(구형 Intel Mac)용 폴백.

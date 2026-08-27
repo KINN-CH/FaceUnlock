@@ -142,6 +142,17 @@ final class CameraSession: NSObject {
     /// 미리보기는 15fps면 눈에 부드럽다. 분석 프레임과 따로 솎는다.
     private let previewInterval: CFTimeInterval = 1.0 / 15.0
 
+    /// 초당 프레임 수와 평균 밝기. 카메라 큐에서만 만진다.
+    ///
+    /// 왜 밝기까지 재는가: "검은 화면" 신고가 두 가지 전혀 다른 상태를
+    /// 가리킨다. 프레임이 아예 안 오는 것과, **프레임은 오는데 내용이
+    /// 새까만 것**이다. 앞엣것은 장치 문제고 뒤엣것은 노출 문제라 고칠
+    /// 곳이 다른데, 로그만 봐서는 구분이 안 됐다. 밝기 한 숫자면 갈린다.
+    /// (0=완전한 검정, 255=완전한 흰색. 실내 얼굴은 보통 60~140 근처다.)
+    private var healthTickStartedAt: CFTimeInterval = 0
+    private var framesInHealthTick = 0
+    private var brightnessSum = 0.0
+
     var isRunning: Bool { session.isRunning }
 
     private override init() {
@@ -162,14 +173,18 @@ final class CameraSession: NSObject {
     func beginPreview() {
         previewLock.lock()
         previewViewers += 1
+        let count = previewViewers
         previewLock.unlock()
+        Log.camera.info("미리보기 켜짐 (보는 화면 \(count)개)")
     }
 
     func endPreview() {
         previewLock.lock()
         previewViewers = max(0, previewViewers - 1)
         let noneLeft = previewViewers == 0
+        let count = previewViewers
         previewLock.unlock()
+        Log.camera.info("미리보기 꺼짐 (보는 화면 \(count)개)")
         if noneLeft { PreviewFeed.shared.clear() }
     }
 
@@ -183,9 +198,19 @@ final class CameraSession: NSObject {
     private func publishPreview(_ buffer: CVPixelBuffer, now: CFTimeInterval) {
         guard wantsPreview, now - lastPreviewTime >= previewInterval else { return }
         lastPreviewTime = now
-        guard let image = Self.makeImage(from: buffer) else { return }
+        guard let image = Self.makeImage(from: buffer) else {
+            Log.camera.error("미리보기 프레임을 이미지로 바꾸지 못했습니다")
+            return
+        }
+        if !publishedPreviewFrame {
+            publishedPreviewFrame = true
+            Log.camera.info("미리보기 첫 프레임 \(image.width)×\(image.height)")
+        }
         PreviewFeed.shared.publish(image)
     }
+
+    /// 이번 시작에서 미리보기로 한 장이라도 내보냈는가. 로그를 한 번만 찍기 위한 것.
+    private var publishedPreviewFrame = false
 
     /// BGRA 픽셀 버퍼를 CGImage 로 **복사**한다.
     ///
@@ -267,6 +292,10 @@ final class CameraSession: NSObject {
         guard !session.isRunning else { return }
         lastFrameTime = 0
         framesThisStart = 0
+        publishedPreviewFrame = false
+        healthTickStartedAt = CACurrentMediaTime()
+        framesInHealthTick = 0
+        brightnessSum = 0
         startedAt = CACurrentMediaTime()
         frameLock.lock(); lastFrameAt = 0; frameLock.unlock()
         session.startRunning()
@@ -607,7 +636,53 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         lastFrameTime = now
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        logFrameHealth(pixelBuffer, now: now)
         publishPreview(pixelBuffer, now: now)
         onFrame?(pixelBuffer)
+    }
+
+    /// 초당 한 줄로 "몇 장이 얼마나 밝게 들어왔는지" 를 남긴다.
+    ///
+    /// 밝기는 전수로 재면 프레임마다 100만 픽셀을 훑게 되므로 가로·세로
+    /// 16픽셀 간격으로 성기게 뽑는다 (1280×720 기준 3600점). 값의 절대
+    /// 정확도는 필요 없고 "새까만가 아닌가" 만 알면 된다.
+    private func logFrameHealth(_ buffer: CVPixelBuffer, now: CFTimeInterval) {
+        framesInHealthTick += 1
+        brightnessSum += Self.meanBrightness(of: buffer)
+
+        guard now - healthTickStartedAt >= 1 else { return }
+        let mean = Int((brightnessSum / Double(max(1, framesInHealthTick))).rounded())
+        // 시작 직후 몇 초와, 진짜 새까만 프레임만 남긴다. 계속 찍으면 초당
+        // 한 줄씩 쌓여 정작 볼 것을 덮는다.
+        if now - startedAt < 3 || mean < 8 {
+            Log.camera.info("프레임 \(self.framesInHealthTick)장/초, 평균 밝기 \(mean)")
+        }
+        healthTickStartedAt = now
+        framesInHealthTick = 0
+        brightnessSum = 0
+    }
+
+    private static func meanBrightness(of buffer: CVPixelBuffer) -> Double {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return 0 }
+
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let stride = CVPixelBufferGetBytesPerRow(buffer)
+        let pixels = base.assumingMemoryBound(to: UInt8.self)
+
+        var total = 0
+        var samples = 0
+        for y in Swift.stride(from: 0, to: height, by: 16) {
+            let row = pixels + y * stride
+            for x in Swift.stride(from: 0, to: width, by: 16) {
+                // BGRA. 사람 눈에 맞춘 가중치까지 갈 필요 없이 평균이면 충분하다.
+                let p = row + x * 4
+                total += Int(p[0]) + Int(p[1]) + Int(p[2])
+                samples += 3
+            }
+        }
+        return samples > 0 ? Double(total) / Double(samples) : 0
     }
 }
