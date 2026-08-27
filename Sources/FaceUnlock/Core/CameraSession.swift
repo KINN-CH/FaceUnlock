@@ -16,6 +16,18 @@ import Foundation
 ///
 /// 이제 세션은 하나고, 쓰는 쪽은 [start(owner:onFrame:onFailure:)] 로 빌린다.
 /// 남이 빌려간 카메라를 실수로 끄지 않도록 [stop(owner:)] 는 소유자만 받는다.
+///
+/// ── 카메라는 "켜졌다" 고 거짓말을 한다 ───────────────────────────────────
+/// 세션을 하나로 합친 뒤에도 증상이 남았다. 짧은 간격으로 껐다 켜기를 반복하면
+/// (인식 테스트 창의 "다시 시도") 서너 번째쯤에서 `startRunning()` 이 성공하고
+/// `isRunning` 도 true 인데 **프레임이 한 장도 안 오는** 상태가 된다.
+/// 미리보기는 검은 화면이고 얼굴은 영영 안 잡힌다. 런타임 오류 알림도,
+/// 세션 중단 알림도 오지 않는다 — AVFoundation 은 이때 아무 말도 안 한다.
+///
+/// 그래서 이 클래스는 **자기가 켜졌다고 믿지 않는다.** 시작한 뒤
+/// [firstFrameTimeout] 안에 프레임이 실제로 들어오는지 확인하고, 안 들어오면
+/// 장치를 통째로 다시 연다([hardReset]). 껐다 켜는 것만으로는 이 상태에서
+/// 빠져나오지 못하고 입력·출력을 떼어내야 장치가 살아난다.
 final class CameraSession: NSObject {
 
     static let shared = CameraSession()
@@ -63,10 +75,43 @@ final class CameraSession: NSObject {
     private var restartAttempts = 0
     private let maxRestartAttempts = 3
 
+    /// 시작 시도 일련번호. 예정된 첫 프레임 검사가 **그 시작에 대한 것인지**
+    /// 구분한다. 이게 없으면 이미 정지·재시작된 뒤에 늦게 도착한 검사가
+    /// 멀쩡히 도는 세션을 재개방해버린다.
+    private var startGeneration = 0
+    /// 시작 후 이 시간 안에 첫 프레임이 안 오면 장치가 죽은 것으로 본다.
+    /// 내장 카메라는 정상이면 0.5초 안에 첫 장이 온다.
+    private let firstFrameTimeout: CFTimeInterval = 2.0
+    /// 장치 재개방 시도 횟수. 프레임이 한 장이라도 오면 0으로 돌아간다.
+    private var resetAttempts = 0
+    private let maxResetAttempts = 2
+    /// 재개방 중에는 다른 복구 경로가 끼어들면 안 된다.
+    /// (재개방이 부르는 `stopRunning()` 이 중단 알림을 띄우고, 그걸 받은
+    ///  [scheduleRestart] 가 동시에 세션을 다시 켜려 든다.)
+    private var isResetting = false
+
+    /// 미리보기 레이어는 하나만 만들어 돌려 쓴다.
+    ///
+    /// 부를 때마다 새로 만들면 같은 세션에 연결만 계속 쌓인다. 쓰는 화면은
+    /// 등록 마법사와 인식 테스트뿐이고 둘이 동시에 뜨지 않으므로 하나면 된다.
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+
     var isRunning: Bool { session.isRunning }
+
+    private override init() {
+        super.init()
+        // 구성 시점이 아니라 여기서 등록한다. 재개방하면 구성을 다시 하는데,
+        // 그때 또 등록하면 옵저버가 중복돼 복구가 두 배로 돈다.
+        observeSession()
+    }
 
     /// 등록 화면 미리보기용 레이어. 프레임 콜백과 별개로 동작한다.
     func makePreviewLayer() -> AVCaptureVideoPreviewLayer {
+        if let previewLayer {
+            // 레이어는 부모를 하나만 가진다. 이전 화면에서 떼어내야 새 화면에 붙는다.
+            previewLayer.removeFromSuperlayer()
+            return previewLayer
+        }
         let layer = AVCaptureVideoPreviewLayer(session: session)
         layer.videoGravity = .resizeAspectFill
         // 거울처럼 보여야 사용자가 자기 움직임을 직관적으로 맞출 수 있다.
@@ -75,6 +120,7 @@ final class CameraSession: NSObject {
             connection.automaticallyAdjustsVideoMirroring = false
             connection.isVideoMirrored = true
         }
+        previewLayer = layer
         return layer
     }
 
@@ -98,6 +144,7 @@ final class CameraSession: NSObject {
             self.onFailure = onFailure
             self.shouldBeRunning = true
             self.restartAttempts = 0
+            self.resetAttempts = 0
             self.startOnQueue()
         }
     }
@@ -109,14 +156,20 @@ final class CameraSession: NSObject {
             // 소유자가 이미 사라졌으면(창이 닫히며 해제됨) 아무나 끌 수 있어야 한다.
             // 그렇지 않으면 표시등이 켜진 채로 남는다.
             guard self.owner == nil || self.owner === owner else { return }
-            self.owner = nil
-            self.onFrame = nil
-            self.onFailure = nil
-            self.shouldBeRunning = false
-            guard self.session.isRunning else { return }
-            self.session.stopRunning()
-            Log.camera.info("카메라 세션 정지")
+            self.stopOnQueue()
         }
+    }
+
+    private func stopOnQueue() {
+        owner = nil
+        onFrame = nil
+        onFailure = nil
+        shouldBeRunning = false
+        // 예정된 첫 프레임 검사를 무효화한다.
+        startGeneration &+= 1
+        guard session.isRunning else { return }
+        session.stopRunning()
+        Log.camera.info("카메라 세션 정지")
     }
 
     private func startOnQueue() {
@@ -127,7 +180,6 @@ final class CameraSession: NSObject {
         if !isConfigured {
             guard configure() else { return }
             isConfigured = true
-            observeSession()
         }
         guard !session.isRunning else { return }
         lastFrameTime = 0
@@ -143,6 +195,57 @@ final class CameraSession: NSObject {
             return
         }
         Log.camera.info("카메라 세션 시작")
+        scheduleFirstFrameCheck()
+    }
+
+    // MARK: 첫 프레임 확인
+
+    /// `isRunning == true` 를 믿지 않고 프레임이 실제로 오는지 확인한다.
+    private func scheduleFirstFrameCheck() {
+        startGeneration &+= 1
+        let generation = startGeneration
+        queue.asyncAfter(deadline: .now() + firstFrameTimeout) { [weak self] in
+            guard let self,
+                  self.shouldBeRunning,
+                  generation == self.startGeneration else { return }
+            // 한 장이라도 왔으면 장치는 살아 있다.
+            guard self.secondsSinceLastFrame == nil else { return }
+            Log.camera.error("세션은 도는데 프레임이 오지 않습니다 — 장치를 다시 엽니다")
+            self.hardReset()
+        }
+    }
+
+    /// 장치를 통째로 다시 연다.
+    ///
+    /// `stopRunning()` + `startRunning()` 만으로는 이 상태를 못 벗어난다.
+    /// 입력·출력을 떼고 구성을 처음부터 다시 해야 장치가 실제로 열린다.
+    private func hardReset() {
+        guard !isResetting else { return }
+        guard resetAttempts < maxResetAttempts else {
+            Log.camera.error("장치를 다시 열지 못했습니다 — 포기")
+            let failure = onFailure
+            stopOnQueue()
+            failure?("카메라가 응답하지 않습니다. 다른 앱이 카메라를 쓰고 있는지 확인해 주세요.")
+            return
+        }
+        isResetting = true
+        resetAttempts += 1
+        Log.camera.info("장치 재개방 \(self.resetAttempts)/\(self.maxResetAttempts)")
+
+        session.stopRunning()
+        session.beginConfiguration()
+        session.inputs.forEach { session.removeInput($0) }
+        session.outputs.forEach { session.removeOutput($0) }
+        session.commitConfiguration()
+        isConfigured = false
+
+        // 장치가 완전히 놓이기를 기다린다. 곧바로 다시 잡으면 같은 상태가 된다.
+        queue.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            guard let self else { return }
+            self.isResetting = false
+            guard self.shouldBeRunning else { return }
+            self.startOnQueue()
+        }
     }
 
     // MARK: 자동 복구
@@ -173,11 +276,14 @@ final class CameraSession: NSObject {
 
     private func scheduleRestart() {
         queue.async { [weak self] in
-            guard let self, self.shouldBeRunning, !self.session.isRunning else { return }
+            guard let self, self.shouldBeRunning,
+                  !self.isResetting,          // 재개방이 알아서 다시 켠다
+                  !self.session.isRunning else { return }
             guard self.restartAttempts < self.maxRestartAttempts else {
                 Log.camera.error("카메라 복구 실패 — 재시도 상한 도달")
-                self.shouldBeRunning = false
-                self.onFailure?("카메라가 멈췄고 다시 시작하지 못했습니다.")
+                let failure = self.onFailure
+                self.stopOnQueue()
+                failure?("카메라가 멈췄고 다시 시작하지 못했습니다.")
                 return
             }
             self.restartAttempts += 1
@@ -185,7 +291,7 @@ final class CameraSession: NSObject {
             Log.camera.info("카메라가 멈춰 다시 시작합니다 (\(attempt)/\(self.maxRestartAttempts))")
             // 장치가 놓이기를 잠깐 기다린다. 곧바로 다시 잡으면 또 실패한다.
             self.queue.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-                guard let self, self.shouldBeRunning else { return }
+                guard let self, self.shouldBeRunning, !self.isResetting else { return }
                 self.startOnQueue()
             }
         }
@@ -256,14 +362,15 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         // 빌려간 쪽이 stop 도 못 부르고 사라졌다. 표시등을 끄고 나온다.
         if owner == nil && shouldBeRunning {
             Log.camera.info("카메라 소유자가 사라져 세션을 정지합니다")
-            shouldBeRunning = false
-            session.stopRunning()
-            onFrame = nil
-            onFailure = nil
+            stopOnQueue()
             return
         }
 
         frameLock.lock(); lastFrameAt = now; frameLock.unlock()
+        // 프레임이 실제로 오고 있으니 복구 카운터를 되돌린다. 다음에 카메라가
+        // 죽으면 다시 처음부터 시도할 수 있어야 한다.
+        resetAttempts = 0
+        restartAttempts = 0
 
         guard now - lastFrameTime >= minimumFrameInterval else { return }
         lastFrameTime = now

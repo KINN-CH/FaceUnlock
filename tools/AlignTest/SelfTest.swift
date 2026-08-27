@@ -41,19 +41,44 @@ enum SelfTest {
     ///
     /// `screenIsLockedNow()` 가 잘못해서 `true` 를 돌려주면, 잠기지 않은 화면에
     /// 로그인 비밀번호가 그대로 타이핑된다 — 열려 있던 터미널·채팅창·문서에.
-    /// 이 테스트는 터미널에서(= 화면이 풀린 상태에서) 돌기 때문에 반드시 `false`
-    /// 여야 한다. 누가 이 함수를 "판단 불가 시 true" 로 바꾸면 여기서 걸린다.
+    /// 누가 이 함수를 "판단 불가 시 true" 로 바꾸면 여기서 걸린다.
+    ///
+    /// 판정은 **실제 화면 상태와 대조**한다. 예전에는 "터미널에서 도니까 당연히
+    /// 풀린 상태" 라고 가정하고 `true` 를 무조건 실패로 봤는데, 화면을 잠가두고
+    /// (원격 터미널이나 다른 기기에서) 돌리면 멀쩡한 코드가 실패로 나왔다.
+    /// 하필 이 앱을 시험하는 사람은 화면을 잠가놓고 있을 때가 많다.
     private static func lockGuardTest() -> Int {
         print("")
         print("▶ 잠금 가드 검사")
 
-        let locked = LockMonitor.screenIsLockedNow()
-        if locked {
+        let reported = LockMonitor.screenIsLockedNow()
+        let actual = actualScreenIsLocked()
+
+        switch (reported, actual) {
+        case (true, false):
             print("  ❌ 화면이 풀린 상태인데 잠김으로 보고했습니다 — 주입 가드가 무력화됩니다")
             return 1
+        case (false, true):
+            // 안전한 방향의 오차다(주입을 막는 쪽). 그래도 잠금 해제가 영영
+            // 안 되므로 알려는 준다.
+            print("  ⚠️  화면이 잠겼는데 풀린 것으로 보고했습니다 — 주입은 안전하나 해제도 안 됩니다")
+            return 1
+        case (true, true):
+            print("  ✅ 잠긴 화면을 잠김으로 정확히 보고")
+        case (false, false):
+            print("  ✅ 풀린 화면을 잠기지 않음으로 정확히 보고 (주입 차단됨)")
         }
-        print("  ✅ 풀린 화면을 잠기지 않음으로 정확히 보고 (주입 차단됨)")
         return 0
+    }
+
+    /// 대조군. 제품 코드를 거치지 않고 시스템 딕셔너리를 직접 읽는다.
+    /// `screenIsLockedNow()` 를 한 번 더 부르면 아무것도 검증하지 못한다 —
+    /// 이 테스트가 잡아야 하는 건 그 함수가 잘못 고쳐지는 경우다.
+    private static func actualScreenIsLocked() -> Bool {
+        guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+        // 숫자로 오는 경우가 있어 Bool 캐스팅에만 기대지 않는다.
+        if let flag = dict["CGSSessionScreenIsLocked"] as? NSNumber { return flag.boolValue }
+        return false
     }
 
     // MARK: 1. 변환 정확도
