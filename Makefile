@@ -114,12 +114,14 @@ install: release
 	@cp -R $(APP_BUNDLE) /Applications/
 	@echo "==> installed to /Applications/$(APP_NAME).app"
 
-# 배포용 DMG. 공증(notarization)이 없으므로 받는 쪽에서 quarantine 을 풀어야 한다.
-# README 의 설치 안내를 함께 읽도록 DMG 안에 넣어 둔다.
+# 배포용 DMG. 열면 배경 화살표 안내가 있는 표준 설치 창이 뜬다 (dmgbuild 로
+# 레이아웃을 심는다 — Finder AppleScript 와 달리 자동화 권한 없이 동작).
+# 받은 사람은 '설치 도우미.command' 우클릭 → 열기 한 번이면 끝난다
+# (앱 복사 + quarantine 해제 + 모델 설치 + 실행까지 자동).
 #
 # **ArcFace 가중치는 뺀다.** InsightFace 사전학습 가중치는 비상업 연구용
-# 라이선스라 재배포할 수 없다. 받은 사람은 저장소에서 `make model` 을 돌려
-# ~/Library/Application Support/FaceUnlock/Models/ 에 넣는다 (README 안내).
+# 라이선스라 재배포할 수 없다. 설치 도우미가 공식 배포처에서 직접 내려받아
+# ~/Library/Application Support/FaceUnlock/Models/ 에 넣는다.
 # 리소스를 빼면 서명이 깨지므로 뺀 뒤 다시 서명한다.
 DIST_DIR := dist
 dmg: release
@@ -131,16 +133,16 @@ dmg: release
 	    --entitlements Resources/$(APP_NAME).entitlements \
 	    --timestamp=none \
 	    $(DIST_DIR)/staging/$(APP_NAME).app
-	@ln -s /Applications $(DIST_DIR)/staging/Applications
 	@cp README.md $(DIST_DIR)/staging/'먼저 읽어주세요.md'
 	@mkdir -p $(DIST_DIR)/staging/.tools
 	@cp tools/fetch_arcface.py $(DIST_DIR)/staging/.tools/
-	@install -m 755 scripts/install_model.command '$(DIST_DIR)/staging/모델 설치.command'
-	@hdiutil create -quiet -volname "$(APP_NAME)" -srcfolder $(DIST_DIR)/staging \
-	    -ov -format UDZO $(DIST_DIR)/$(APP_NAME).dmg
+	@install -m 755 scripts/install_helper.command '$(DIST_DIR)/staging/설치 도우미.command'
+	@swift tools/make_dmg_background.swift $(BUILD_DIR)/dmg-background.png
+	@./scripts/build_dmg.sh $(DIST_DIR)/staging $(BUILD_DIR)/dmg-background.png \
+	    $(DIST_DIR)/$(APP_NAME).dmg
 	@rm -rf $(DIST_DIR)/staging
 	@echo "==> $(DIST_DIR)/$(APP_NAME).dmg (ArcFace 모델 미포함 — 라이선스상 재배포 불가)"
-	@echo "    주의: 공증 없음. 받는 쪽에서 xattr -dr com.apple.quarantine 필요"
+	@echo "    설치: DMG 안 '설치 도우미.command' 우클릭 → 열기"
 
 clean:
 	@rm -rf $(BUILD_DIR)

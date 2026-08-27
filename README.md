@@ -75,27 +75,24 @@ make install    # /Applications 에 설치
 
 ### 배포된 DMG 사용
 
-1. [최신 릴리스](https://github.com/KINN-CH/FaceUnlock/releases)에서 `FaceUnlock.dmg`를 받습니다
-2. 열고 `FaceUnlock.app`을 `Applications` 폴더로 드래그합니다
-3. DMG 안의 **`모델 설치.command`를 우클릭 → 열기**로 실행합니다.
-   얼굴 인식 모델을 내려받아 변환합니다 (몇 분 걸립니다).
-   Python 3.11/3.12가 필요합니다 — 없으면 `brew install python@3.12` 후 다시 실행하세요
-4. `/Applications/FaceUnlock.app`을 실행합니다
+1. [최신 릴리스](https://github.com/KINN-CH/FaceUnlock/releases)에서 `FaceUnlock.dmg`를 받아 엽니다
+2. 창의 안내대로 앱을 `Applications`로 드래그합니다
+3. **`설치 도우미.command`를 우클릭 → 열기**로 실행합니다 — 나머지는 자동입니다:
+   - 앱 복사 확인 + 실행 차단(quarantine) 해제
+   - 얼굴 인식 모델 내려받기 + 변환 (몇 분 걸립니다.
+     Python 3.12가 없으면 Homebrew로 설치할지 물어봅니다)
+   - 설치가 끝나면 FaceUnlock 을 바로 실행해 줍니다
 
-**모델을 따로 설치하는 이유**: ArcFace 가중치가 InsightFace의 비상업 연구용
-라이선스라 DMG에 동봉할 수 없습니다. 스크립트는 InsightFace 공식 배포처에서
+**모델을 따로 내려받는 이유**: ArcFace 가중치가 InsightFace의 비상업 연구용
+라이선스라 DMG에 동봉할 수 없습니다. 설치 도우미는 InsightFace 공식 배포처에서
 직접 내려받아 `~/Library/Application Support/FaceUnlock/Models/`에 넣고,
 앱은 번들에 모델이 없으면 이 위치를 찾습니다.
 
-**"확인되지 않은 개발자" / "손상되었기 때문에 열 수 없습니다" 경고가 뜨는 이유**:
-Apple Developer Program($99/년)에 가입하지 않아 **공증(notarization)이 없습니다.**
-파일이 손상된 게 아닙니다. 우클릭 → 열기로 안 되면:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/FaceUnlock.app
-```
-
-또는 시스템 설정 → 개인정보 보호 및 보안 → 아래로 스크롤 → **확인 없이 열기**.
+**설치 도우미를 "우클릭 → 열기"로 여는 이유**: Apple Developer Program($99/년)에
+가입하지 않아 **공증(notarization)이 없습니다.** 파일이 손상된 게 아니라 서명
+확인을 못 한 것뿐입니다. 우클릭 → 열기로 안 되면 시스템 설정 → 개인정보 보호 및
+보안 → 아래로 스크롤 → **확인 없이 열기**를 누른 뒤 다시 실행하세요.
+앱 자체의 quarantine 은 설치 도우미가 대신 풀어 주므로 터미널 명령이 필요 없습니다.
 
 > 모르는 개발자의 서명 없는 앱에 이런 조치를 취하는 건 일반적으로 위험한 일입니다.
 > 신뢰할 수 없다면 소스에서 직접 빌드하세요. 그게 이 저장소를 공개하는 이유입니다.
