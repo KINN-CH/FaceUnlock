@@ -96,8 +96,6 @@ final class EnrollmentController: ObservableObject {
 
     var progress: Double { Double(completed.count) / Double(FacePose.allCases.count) }
 
-    func makePreviewLayer() -> AVCaptureVideoPreviewLayer { camera.makePreviewLayer() }
-
     // MARK: 생명주기
 
     func start() {

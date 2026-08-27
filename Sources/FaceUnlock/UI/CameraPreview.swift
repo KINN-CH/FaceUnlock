@@ -1,44 +1,37 @@
-import AVFoundation
-import AppKit
 import SwiftUI
 
-/// AVCaptureVideoPreviewLayer 를 SwiftUI 에 얹는다.
-struct CameraPreview: NSViewRepresentable {
+/// 카메라 미리보기.
+///
+/// [PreviewFeed] 가 흘려보내는 프레임을 그대로 그린다. AVFoundation 의
+/// 미리보기 레이어를 쓰지 않는 이유는 [PreviewFeed] 주석에 적어두었다.
+struct CameraPreview: View {
 
-    let makeLayer: () -> AVCaptureVideoPreviewLayer
+    @ObservedObject private var feed = PreviewFeed.shared
+    @ObservedObject private var l10n = L10n.shared
 
-    func makeNSView(context: Context) -> NSView {
-        let view = LayerHostingView()
-        view.wantsLayer = true
-        let preview = makeLayer()
-        view.previewLayer = preview
-        view.layer?.addSublayer(preview)
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    /// 화면이 사라질 때 레이어를 떼어낸다.
-    ///
-    /// 미리보기 레이어는 `CameraSession` 이 하나만 만들어 돌려 쓴다. 여기서
-    /// 떼지 않으면 닫힌 창의 레이어에 계속 붙어 있어서 다음 창에 붙지 않는다
-    /// (레이어의 부모는 하나뿐이다) — 두 번째로 연 창이 검은 화면이 된다.
-    static func dismantleNSView(_ nsView: NSView, coordinator: ()) {
-        guard let view = nsView as? LayerHostingView else { return }
-        view.previewLayer?.removeFromSuperlayer()
-        view.previewLayer = nil
-    }
-
-    /// 레이어는 오토레이아웃을 따르지 않으므로 프레임을 직접 맞춰준다.
-    final class LayerHostingView: NSView {
-        var previewLayer: AVCaptureVideoPreviewLayer?
-
-        override func layout() {
-            super.layout()
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            previewLayer?.frame = bounds
-            CATransaction.commit()
+    var body: some View {
+        ZStack {
+            Color.black
+            if let image = feed.frame {
+                // CGImage 는 첫 행이 화면 위쪽이다. `.upMirrored` 로 좌우만
+                // 뒤집어 거울처럼 보여준다 — 그래야 사용자가 자기 움직임을
+                // 직관적으로 맞출 수 있다. 분석 프레임은 뒤집지 않는다.
+                Image(decorative: image, scale: 1, orientation: .upMirrored)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                // 검은 사각형만 두면 고장인지 준비 중인지 알 수 없다.
+                VStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(T("카메라를 켜는 중…", "Starting the camera…"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
+        // 화면이 살아 있는 동안에만 프레임을 CGImage 로 바꾼다. 잠금화면
+        // 인증에는 미리보기가 없으므로 그 경로는 이 비용을 전혀 내지 않는다.
+        .onAppear { CameraSession.shared.beginPreview() }
+        .onDisappear { CameraSession.shared.endPreview() }
     }
 }

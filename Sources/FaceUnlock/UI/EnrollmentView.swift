@@ -11,7 +11,7 @@ struct EnrollmentView: View {
             header
 
             ZStack {
-                CameraPreview(makeLayer: controller.makePreviewLayer)
+                CameraPreview()
                     .frame(width: 400, height: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 

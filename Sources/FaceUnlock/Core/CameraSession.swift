@@ -77,6 +77,8 @@ final class CameraSession: NSObject {
     }
 
     private var isConfigured = false
+    /// 지금 열려 있는 장치. 포맷을 다시 고정할 때 쓴다 (탐색을 매번 돌리지 않는다).
+    private var activeDevice: AVCaptureDevice?
 
     /// 켜져 있어야 하는가. `queue` 위에서만 만진다.
     ///
@@ -95,33 +97,50 @@ final class CameraSession: NSObject {
     /// 이번 시작 시각. 첫 프레임을 얼마나 기다렸는지 재는 기준.
     private var startedAt: CFTimeInterval = 0
     /// 시작 후 이 시간 안에 첫 프레임이 안 오면 장치가 죽은 것으로 본다.
-    /// 내장 카메라는 정상이면 0.5초 안에 첫 장이 온다.
-    private let firstFrameTimeout: CFTimeInterval = 2.0
+    /// 내장 카메라는 정상이면 0.3초 안에 첫 장이 온다.
+    private let firstFrameTimeout: CFTimeInterval = 1.5
     /// 잘 오던 프레임이 이 시간 동안 끊기면 역시 죽은 것으로 본다.
-    /// 10fps 로 솎아 받으므로 정상이라면 간격이 0.1초를 넘지 않는다.
-    private let stallTimeout: CFTimeInterval = 2.0
+    /// 20fps 로 받으므로 정상이라면 간격이 0.05초를 넘지 않는다 — 0.8초면
+    /// 열여섯 장을 놓친 것이라 오탐이 아니다.
+    ///
+    /// 예전엔 2초였다. 잠금화면에서는 스트림이 1초쯤마다 먹통이 되는데
+    /// (아래 [applyLightestFormat] 참조) 2초를 기다렸다가 0.7초를 더 쉬면
+    /// 실제로 프레임을 받는 시간이 전체의 1/4도 안 됐다. 깜빡임 챌린지가
+    /// 12초 안에 끝날 수가 없었다.
+    private let stallTimeout: CFTimeInterval = 0.8
     /// 감시 주기.
-    private let watchdogInterval: CFTimeInterval = 0.5
+    private let watchdogInterval: CFTimeInterval = 0.25
     /// 장치 재개방 시도 횟수.
     private var resetAttempts = 0
     private let maxResetAttempts = 3
     /// 화면 절전으로 프레임이 멈췄다는 안내를 이미 남겼는가.
     /// 0.5초마다 같은 줄을 찍으면 로그가 못 쓰게 된다.
     private var reportedDisplaySleepStall = false
-    /// 이 시간 넘게 프레임을 정상적으로 받았으면 복구 예산을 되돌린다.
-    /// 프레임 한 장에 되돌리면, 켤 때마다 1초 만에 죽는 장치를 상대로
-    /// 영원히 재개방을 반복하게 된다.
-    private let healthyRunDuration: CFTimeInterval = 5
+    /// 이번 시작에서 받은 프레임 수. 복구 예산을 되돌릴지 판단한다.
+    private var framesThisStart = 0
+    /// 한 번의 시작에서 이만큼 받았으면 "장치는 살아 있다" 로 본다.
+    ///
+    /// 예전에는 **5초를 연속으로** 버텨야 예산을 되돌렸다. 그런데 잠금화면
+    /// 에서는 시스템 필터가 1초 남짓마다 스트림을 삼켜버려서 5초를 채울
+    /// 방법이 없었다. 그래서 세 번 만에 예산이 바닥나고 "카메라가 응답하지
+    /// 않습니다" 로 끝났다 — 매번 프레임을 스무 장씩 잘 받아놓고도.
+    ///
+    /// 한 장도 못 받은 채 세 번 실패하는 **진짜 죽은 장치**와, 짧게라도
+    /// 계속 주는 장치를 가르는 기준이 이것이다. 앞엣것은 여전히 포기하고,
+    /// 뒤엣것은 될 때까지 다시 연다.
+    private let usableBurstFrames = 5
     /// 재개방 중에는 다른 복구 경로가 끼어들면 안 된다.
     /// (재개방이 부르는 `stopRunning()` 이 중단 알림을 띄우고, 그걸 받은
     ///  [scheduleRestart] 가 동시에 세션을 다시 켜려 든다.)
     private var isResetting = false
 
-    /// 미리보기 레이어는 하나만 만들어 돌려 쓴다.
-    ///
-    /// 부를 때마다 새로 만들면 같은 세션에 연결만 계속 쌓인다. 쓰는 화면은
-    /// 등록 마법사와 인식 테스트뿐이고 둘이 동시에 뜨지 않으므로 하나면 된다.
-    private var previewLayer: AVCaptureVideoPreviewLayer?
+    /// 미리보기를 보고 있는 화면 수. 0이면 변환 비용을 아예 들이지 않는다 —
+    /// 잠금화면 인증에는 미리보기가 없다.
+    private let previewLock = NSLock()
+    private var previewViewers = 0
+    private var lastPreviewTime: CFTimeInterval = 0
+    /// 미리보기는 15fps면 눈에 부드럽다. 분석 프레임과 따로 솎는다.
+    private let previewInterval: CFTimeInterval = 1.0 / 15.0
 
     var isRunning: Bool { session.isRunning }
 
@@ -132,23 +151,60 @@ final class CameraSession: NSObject {
         observeSession()
     }
 
-    /// 등록 화면 미리보기용 레이어. 프레임 콜백과 별개로 동작한다.
-    func makePreviewLayer() -> AVCaptureVideoPreviewLayer {
-        if let previewLayer {
-            // 레이어는 부모를 하나만 가진다. 이전 화면에서 떼어내야 새 화면에 붙는다.
-            previewLayer.removeFromSuperlayer()
-            return previewLayer
-        }
-        let layer = AVCaptureVideoPreviewLayer(session: session)
-        layer.videoGravity = .resizeAspectFill
-        // 거울처럼 보여야 사용자가 자기 움직임을 직관적으로 맞출 수 있다.
-        // 미리보기에만 적용되고 분석 프레임에는 영향이 없다.
-        if let connection = layer.connection, connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = true
-        }
-        previewLayer = layer
-        return layer
+    // MARK: 미리보기
+
+    /// 미리보기를 켠다. 화면이 사라지면 반드시 [endPreview] 를 부른다.
+    ///
+    /// 프레임을 세션에서 따로 뽑지 않고 **분석용과 같은 프레임**을 CGImage 로
+    /// 복사해 [PreviewFeed] 로 보낸다. 왜 `AVCaptureVideoPreviewLayer` 를
+    /// 버렸는지는 [PreviewFeed] 주석에 적어두었다 — 요약하면, 그 레이어는
+    /// 장치를 다시 열면 되살아나지 않아서 검은 화면으로 남는다.
+    func beginPreview() {
+        previewLock.lock()
+        previewViewers += 1
+        previewLock.unlock()
+    }
+
+    func endPreview() {
+        previewLock.lock()
+        previewViewers = max(0, previewViewers - 1)
+        let noneLeft = previewViewers == 0
+        previewLock.unlock()
+        if noneLeft { PreviewFeed.shared.clear() }
+    }
+
+    private var wantsPreview: Bool {
+        previewLock.lock()
+        defer { previewLock.unlock() }
+        return previewViewers > 0
+    }
+
+    /// 프레임을 미리보기로 흘려보낸다. 보는 사람이 없으면 아무 일도 안 한다.
+    private func publishPreview(_ buffer: CVPixelBuffer, now: CFTimeInterval) {
+        guard wantsPreview, now - lastPreviewTime >= previewInterval else { return }
+        lastPreviewTime = now
+        guard let image = Self.makeImage(from: buffer) else { return }
+        PreviewFeed.shared.publish(image)
+    }
+
+    /// BGRA 픽셀 버퍼를 CGImage 로 **복사**한다.
+    ///
+    /// `makeImage()` 는 비트맵을 복사하므로 버퍼를 놓아준 뒤에도 안전하다.
+    /// 버퍼 자체는 곧 재사용되니 참조만 넘기면 화면이 찢어진다.
+    private static func makeImage(from buffer: CVPixelBuffer) -> CGImage? {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+        let context = CGContext(
+            data: base,
+            width: CVPixelBufferGetWidth(buffer),
+            height: CVPixelBufferGetHeight(buffer),
+            bitsPerComponent: 8,
+            bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+                | CGBitmapInfo.byteOrder32Little.rawValue)
+        return context?.makeImage()
     }
 
     // MARK: 생명주기
@@ -210,6 +266,7 @@ final class CameraSession: NSObject {
         }
         guard !session.isRunning else { return }
         lastFrameTime = 0
+        framesThisStart = 0
         startedAt = CACurrentMediaTime()
         frameLock.lock(); lastFrameAt = 0; frameLock.unlock()
         session.startRunning()
@@ -223,6 +280,9 @@ final class CameraSession: NSObject {
             return
         }
         Log.camera.info("카메라 세션 시작")
+        // **세션이 돈 뒤에** 포맷을 고정한다. 순서가 왜 중요한지는
+        // [applyLightestFormat] 주석에 적어두었다.
+        if let activeDevice { Self.applyLightestFormat(to: activeDevice) }
         startWatchdog()
     }
 
@@ -299,7 +359,9 @@ final class CameraSession: NSObject {
         isConfigured = false
 
         // 장치가 완전히 놓이기를 기다린다. 곧바로 다시 잡으면 같은 상태가 된다.
-        queue.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+        // 0.4초면 충분하다 (0.7초에서 줄였다 — 잠금화면에서는 이 쉬는 시간이
+        // 곧 인증이 멈춰 있는 시간이다).
+        queue.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self else { return }
             self.isResetting = false
             guard self.shouldBeRunning else { return }
@@ -412,9 +474,6 @@ final class CameraSession: NSObject {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
 
-        // 640×480 이면 얼굴이 충분히 크게 잡히고 정렬 품질도 유지된다.
-        session.sessionPreset = .vga640x480
-
         guard let device = Self.preferredDevice() else {
             onFailure?(T("사용 가능한 카메라를 찾지 못했습니다.", "No usable camera was found."))
             Log.camera.error("카메라 장치 없음")
@@ -428,6 +487,7 @@ final class CameraSession: NSObject {
             return false
         }
         session.addInput(input)
+        activeDevice = device
 
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -444,6 +504,67 @@ final class CameraSession: NSObject {
 
         Log.camera.info("카메라 구성 완료: \(device.localizedName, privacy: .public)")
         return true
+    }
+
+    /// 장치를 **가장 가벼운 포맷**으로 고정한다.
+    ///
+    /// 예전에는 `sessionPreset = .vga640x480` 만 지정했다. 그런데 이 맥북의
+    /// 내장 카메라에는 640×480 포맷이 아예 없다 (제일 작은 게 1280×720).
+    /// 그러면 macOS 는 카메라를 **1920×1080 24fps** 로 돌리고 스케일러를
+    /// 붙여 640×480 을 만들어 준다 — 우리가 쓰지도 않는 화소를 ISP 가
+    /// 만들어내고, 그 위에 시스템의 시간축 잡음 필터(MLVNR/MCTF)까지 얹힌다.
+    ///
+    /// 잠금화면에서 바로 이 필터가 프레임마다 `-6689` 로 실패하면서 **입력
+    /// 버퍼를 통째로 삼켰다.** 카메라는 24fps 로 멀쩡히 돌고 있는데 앱에는
+    /// 한 장도 오지 않는 상태 — "잠금화면에서 해제가 안 된다" 가 이것이었다.
+    /// (잠금 3초 동안 오류 37건, 잠금 해제 5초 동안 0건으로 확인했다.)
+    ///
+    /// 필터는 시스템 데몬 안에 있어 끌 수 없다. macOS 에서 켜고 끌 수 있는
+    /// 효과는 센터 스테이지뿐이고 나머지는 읽기 전용이다. 그래서 우리가 쥔
+    /// 손잡이는 **필터가 처리할 양** 하나뿐이다. 1280×720 20fps 는
+    /// 1920×1080 24fps 의 1/2.7 이다. 덤으로 스케일러가 빠지고 전력도 준다.
+    ///
+    /// 20fps 인 이유: 분석도 20fps 로 솎으므로 남는 프레임을 안 만들고,
+    /// 가장 짧은 깜빡임(실측 105ms)도 두 장쯤 잡힌다. 15fps 로 더 내리면
+    /// 그 깜빡임이 한 장에 걸칠 수 있어 [minimumFrameInterval] 의 근거가
+    /// 무너진다.
+    ///
+    /// ── **`startRunning()` 뒤에 불러야 한다** ────────────────────────────
+    /// 세션 프리셋이 `.high` 로 남아 있으면 `commitConfiguration()` 이
+    /// activeFormat 을 도로 1920×1080 으로 돌려놓는다. 프리셋을
+    /// InputPriority 로 바꾸면 세션이 양보하지만, macOS 에서는
+    /// `canSetSessionPreset` 이 그 프리셋에 false 를 준다 — 실제로 확인했다.
+    ///
+    /// 반면 **세션이 이미 돌고 있을 때 지정하면 그대로 남는다.** 로그로
+    /// 확인한 순서는 이랬다:
+    ///   구성 중 지정 → 커밋 후 1920×1080 (되돌아감)
+    ///   시작 후 지정 → 1280×720, 실제 프레임도 1280×720 (유지됨)
+    /// 그래서 [startOnQueue] 가 세션을 켠 다음에 이걸 부른다.
+    private static func applyLightestFormat(to device: AVCaptureDevice) {
+        guard let format = device.formats.min(by: { pixelCount(of: $0) < pixelCount(of: $1) }),
+              (try? device.lockForConfiguration()) != nil else {
+            Log.camera.info("포맷을 고정하지 못했습니다 — 시스템 기본값으로 진행합니다")
+            return
+        }
+        defer { device.unlockForConfiguration() }
+
+        device.activeFormat = format
+        // 원하는 20fps 가 이 포맷의 지원 범위 밖일 수 있다. 범위 안으로 접는다.
+        let ranges = format.videoSupportedFrameRateRanges
+        let lowest = ranges.map(\.minFrameRate).min() ?? 20
+        let highest = ranges.map(\.maxFrameRate).max() ?? 20
+        let fps = min(max(20, lowest), highest)
+        let duration = CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))
+        device.activeVideoMinFrameDuration = duration
+        device.activeVideoMaxFrameDuration = duration
+
+        let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        Log.camera.info("포맷 고정: \(size.width)×\(size.height) @\(Int(fps.rounded()))fps")
+    }
+
+    private static func pixelCount(of format: AVCaptureDevice.Format) -> Int32 {
+        let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        return size.width * size.height
     }
 
     private static func preferredDevice() -> AVCaptureDevice? {
@@ -472,10 +593,12 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
 
         frameLock.lock(); lastFrameAt = now; frameLock.unlock()
-        // 충분히 오래 멀쩡했을 때만 복구 예산을 되돌린다. 다음에 카메라가
-        // 죽으면 다시 처음부터 시도할 수 있어야 하지만, 켤 때마다 곧바로
-        // 죽는 장치를 상대로 무한히 재개방하지는 않아야 한다.
-        if now - startedAt > healthyRunDuration {
+
+        // 이번 시작에서 쓸 만큼 받았으면 복구 예산을 되돌린다. 근거는
+        // [usableBurstFrames] 주석 참조 — 짧게 끊기더라도 프레임을 주는
+        // 장치는 계속 다시 열어야 하고, 한 장도 안 주는 장치는 포기해야 한다.
+        framesThisStart += 1
+        if framesThisStart == usableBurstFrames {
             resetAttempts = 0
             restartAttempts = 0
         }
@@ -484,6 +607,7 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         lastFrameTime = now
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        publishPreview(pixelBuffer, now: now)
         onFrame?(pixelBuffer)
     }
 }

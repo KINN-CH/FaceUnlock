@@ -25,14 +25,12 @@ final class RecognitionTestController: ObservableObject {
 
     var threshold: Float { Settings.shared.matchThreshold }
 
-    func makePreviewLayer() -> AVCaptureVideoPreviewLayer { camera.makePreviewLayer() }
-
     /// 화면이 잠기면 카메라를 놓는다.
     ///
-    /// 이 창과 실제 해제 경로는 **서로 다른 `CameraSession` 인스턴스**로 같은
-    /// 장치를 잡는다. 창을 열어둔 채 화면이 잠기면 둘이 카메라를 두고 다투고,
-    /// 그러면 정작 잠금을 풀어야 할 쪽이 프레임을 못 받는다. 진단용인 이쪽이
-    /// 양보하는 게 맞다.
+    /// 세션은 하나뿐이라 창을 열어둔 채 화면이 잠기면 이 창과 실제 해제
+    /// 경로가 같은 카메라를 두고 소유권을 주고받게 된다. 그 사이 프레임 콜백이
+    /// 오가면 정작 잠금을 풀어야 할 쪽이 인식을 처음부터 다시 시작한다.
+    /// 진단용인 이쪽이 양보하는 게 맞다.
     func observeLock() {
         guard lockObserver == nil else { return }
         lockObserver = DistributedNotificationCenter.default().addObserver(
@@ -179,7 +177,7 @@ struct RecognitionTestView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            CameraPreview { controller.makePreviewLayer() }
+            CameraPreview()
                 .frame(width: 320, height: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(
