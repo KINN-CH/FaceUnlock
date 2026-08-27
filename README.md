@@ -77,21 +77,34 @@ make install    # /Applications 에 설치
 
 1. [최신 릴리스](https://github.com/KINN-CH/FaceUnlock/releases)에서 `FaceUnlock.dmg`를 받아 엽니다
 2. 창의 안내대로 앱을 `Applications`로 드래그합니다
-3. **`설치 도우미.command`를 우클릭 → 열기**로 실행합니다 — 나머지는 자동입니다:
-   - 앱 복사 확인 + 실행 차단(quarantine) 해제
-   - 얼굴 인식 모델 내려받기 + 변환 (몇 분 걸립니다.
-     Python 3.12가 없으면 Homebrew로 설치할지 물어봅니다)
-   - 설치가 끝나면 FaceUnlock 을 바로 실행해 줍니다
+3. **`설치 도우미 (Install Helper).command`를 우클릭 → 열기**로 실행합니다.
+   **첫 실행은 macOS가 차단합니다** (`zsh: killed` 로 끝나며 정상입니다):
+   1. **시스템 설정 → 개인정보 보호 및 보안**을 엽니다
+   2. 아래 **보안** 항목까지 스크롤해 **"그래도 열기"** 를 누릅니다
+   3. **Mac 로그인 암호를 입력**합니다
+   4. 설치 도우미를 **다시 우클릭 → 열기** — 이번에는 끝까지 자동으로 진행됩니다:
+      - 앱 복사 확인 + 실행 차단(quarantine) 해제
+      - 얼굴 인식 모델 내려받기 + 변환 (몇 분 걸립니다.
+        Python 3.12가 없으면 Homebrew로 설치할지 물어봅니다)
+      - 설치가 끝나면 FaceUnlock 을 바로 실행해 줍니다
+
+**English quick start**: open the DMG → drag the app to `Applications` →
+right-click **`설치 도우미 (Install Helper).command`** → Open. macOS **blocks the
+first run** (it ends with `zsh: killed` — this is expected): go to **System
+Settings → Privacy & Security**, scroll down to **Security**, click **"Open
+Anyway"**, **enter your password**, then right-click → Open the helper **again**.
+The second run does everything automatically (copies the app, removes quarantine,
+downloads and converts the face-recognition model, then launches FaceUnlock).
+The helper speaks English if your Mac isn't set to Korean.
 
 **모델을 따로 내려받는 이유**: ArcFace 가중치가 InsightFace의 비상업 연구용
 라이선스라 DMG에 동봉할 수 없습니다. 설치 도우미는 InsightFace 공식 배포처에서
 직접 내려받아 `~/Library/Application Support/FaceUnlock/Models/`에 넣고,
 앱은 번들에 모델이 없으면 이 위치를 찾습니다.
 
-**설치 도우미를 "우클릭 → 열기"로 여는 이유**: Apple Developer Program($99/년)에
-가입하지 않아 **공증(notarization)이 없습니다.** 파일이 손상된 게 아니라 서명
-확인을 못 한 것뿐입니다. 우클릭 → 열기로 안 되면 시스템 설정 → 개인정보 보호 및
-보안 → 아래로 스크롤 → **확인 없이 열기**를 누른 뒤 다시 실행하세요.
+**첫 실행이 차단되는 이유**: Apple Developer Program($99/년)에 가입하지 않아
+**공증(notarization)이 없습니다.** 파일이 손상된 게 아니라 서명 확인을 못 한
+것뿐이고, 무공증 배포에서 이 두 번 열기 절차는 macOS 정책상 생략할 수 없습니다.
 앱 자체의 quarantine 은 설치 도우미가 대신 풀어 주므로 터미널 명령이 필요 없습니다.
 
 > 모르는 개발자의 서명 없는 앱에 이런 조치를 취하는 건 일반적으로 위험한 일입니다.

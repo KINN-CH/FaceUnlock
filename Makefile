@@ -116,8 +116,10 @@ install: release
 
 # 배포용 DMG. 열면 배경 화살표 안내가 있는 표준 설치 창이 뜬다 (dmgbuild 로
 # 레이아웃을 심는다 — Finder AppleScript 와 달리 자동화 권한 없이 동작).
-# 받은 사람은 '설치 도우미.command' 우클릭 → 열기 한 번이면 끝난다
-# (앱 복사 + quarantine 해제 + 모델 설치 + 실행까지 자동).
+# 받은 사람은 '설치 도우미 (Install Helper).command' 우클릭 → 열기로 시작한다
+# (앱 복사 + quarantine 해제 + 모델 설치 + 실행까지 자동). 무공증 배포라 첫 실행은
+# Gatekeeper 가 차단하며, 시스템 설정의 '그래도 열기' 후 다시 열어야 한다 — 이 절차는
+# DMG 배경·README 에 안내되어 있다.
 #
 # **ArcFace 가중치는 뺀다.** InsightFace 사전학습 가중치는 비상업 연구용
 # 라이선스라 재배포할 수 없다. 설치 도우미가 공식 배포처에서 직접 내려받아
@@ -133,16 +135,17 @@ dmg: release
 	    --entitlements Resources/$(APP_NAME).entitlements \
 	    --timestamp=none \
 	    $(DIST_DIR)/staging/$(APP_NAME).app
-	@cp README.md $(DIST_DIR)/staging/'먼저 읽어주세요.md'
+	@cp README.md '$(DIST_DIR)/staging/먼저 읽어주세요 (Read Me).md'
 	@mkdir -p $(DIST_DIR)/staging/.tools
 	@cp tools/fetch_arcface.py $(DIST_DIR)/staging/.tools/
-	@install -m 755 scripts/install_helper.command '$(DIST_DIR)/staging/설치 도우미.command'
+	@install -m 755 scripts/install_helper.command \
+	    '$(DIST_DIR)/staging/설치 도우미 (Install Helper).command'
 	@swift tools/make_dmg_background.swift $(BUILD_DIR)/dmg-background.png
 	@./scripts/build_dmg.sh $(DIST_DIR)/staging $(BUILD_DIR)/dmg-background.png \
 	    $(DIST_DIR)/$(APP_NAME).dmg
 	@rm -rf $(DIST_DIR)/staging
 	@echo "==> $(DIST_DIR)/$(APP_NAME).dmg (ArcFace 모델 미포함 — 라이선스상 재배포 불가)"
-	@echo "    설치: DMG 안 '설치 도우미.command' 우클릭 → 열기"
+	@echo "    설치: DMG 안 '설치 도우미 (Install Helper).command' 우클릭 → 열기"
 
 clean:
 	@rm -rf $(BUILD_DIR)

@@ -16,9 +16,9 @@ final class EmbeddingModel {
         var errorDescription: String? {
             switch self {
             case .modelMissing:
-                return T("ArcFace 모델이 없습니다. DMG 의 '설치 도우미.command' 를 실행하거나, "
+                return T("ArcFace 모델이 없습니다. DMG 의 '설치 도우미' 를 실행하거나, "
                          + "저장소에서 make model 을 실행해 주세요.",
-                         "The ArcFace model is missing. Run '설치 도우미.command' from the DMG, "
+                         "The ArcFace model is missing. Run 'Install Helper' from the DMG, "
                          + "or run `make model` in the repository.")
             case .compileFailed(let m): return T("모델 컴파일 실패: \(m)", "Model compilation failed: \(m)")
             case .badOutput(let m):     return T("모델 출력이 예상과 다릅니다: \(m)", "Unexpected model output: \(m)")

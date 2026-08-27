@@ -183,9 +183,9 @@ struct SettingsView: View {
             }
 
             if !state.modelAvailable {
-                Text(T("얼굴 인식 모델이 없습니다. DMG 의 '설치 도우미.command' 를 실행하거나, "
+                Text(T("얼굴 인식 모델이 없습니다. DMG 의 '설치 도우미' 를 실행하거나, "
                        + "저장소에서 make model 후 다시 빌드해 주세요.",
-                       "The recognition model is missing. Run '설치 도우미.command' from the DMG, "
+                       "The recognition model is missing. Run 'Install Helper' from the DMG, "
                        + "or run `make model` in the repository and rebuild."))
                     .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
