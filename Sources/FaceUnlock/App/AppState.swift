@@ -105,7 +105,7 @@ final class AppState: ObservableObject {
         let ready = [
             "얼굴 잠금 해제 \(settings.faceUnlockEnabled ? "켜짐" : "꺼짐")",
             "모델 \(modelAvailable ? "있음" : "없음")",
-            "얼굴 \(store.isEnrolled ? "등록됨" : "미등록")",
+            "얼굴 \(store.isLoaded ? (store.isEnrolled ? "등록됨" : "미등록") : "불러오는 중")",
             "비밀번호 \(Vault.hasPassword ? "등록됨" : "미등록")",
             "카메라 권한 \(Permissions.hasCamera ? "허용" : "없음")",
             "손쉬운 사용 \(Permissions.hasAccessibility ? "허용" : "없음")",
@@ -317,6 +317,7 @@ final class AppState: ObservableObject {
         if !hasCamera        { return "카메라 권한" }
         if !hasAccessibility { return "손쉬운 사용 권한" }
         if !modelAvailable               { return "얼굴 인식 모델" }
+        if !store.isLoaded               { return "얼굴 정보 불러오는 중" }
         if !store.isEnrolled             { return "얼굴 등록" }
         if !Vault.hasPassword            { return "비밀번호 등록" }
         if vaultUnreadable               { return "비밀번호 재등록" }

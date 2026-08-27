@@ -81,6 +81,9 @@ final class FaceStore: ObservableObject {
     static let shared = FaceStore()
 
     @Published private(set) var profile: FaceProfile?
+    /// 첫 복호화가 끝났는지. 끝나기 전의 `profile == nil` 은 "등록 없음" 이 아니라
+    /// "아직 모름" 이다. 이걸 구분하지 않으면 시작 직후 잠깐 미등록으로 보인다.
+    @Published private(set) var isLoaded = false
 
     var isEnrolled: Bool { profile?.samples.isEmpty == false }
     var enrolledPoseCount: Int { profile?.samples.count ?? 0 }
@@ -100,17 +103,38 @@ final class FaceStore: ObservableObject {
 
     // MARK: 입출력
 
+    /// **메인 스레드에서 복호화하지 않는다.**
+    ///
+    /// 복호화는 Keychain 을 건드리고, Keychain 은 확인 창을 띄울 수 있다.
+    /// 그 창이 메인에서 뜨면 앱이 통째로 멈춘다 — 메뉴바 아이콘조차 안 뜬다.
+    /// 그래서 파일 읽기와 복호화는 백그라운드에서 하고 결과만 올린다.
     private func load() {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-        do {
-            let sealed = try Data(contentsOf: fileURL)
-            let plain = try EnclaveCrypto.open(sealed)
-            profile = try JSONDecoder().decode(FaceProfile.self, from: plain)
-            Log.face.info("등록 얼굴 로드됨 (샘플 \(self.profile?.samples.count ?? 0)개)")
-        } catch {
-            // 암호화 키가 바뀐 경우(앱 재서명 등) 여기로 온다. 조용히 무시하지 말고 알린다.
-            Log.face.error("등록 얼굴을 읽지 못했습니다: \(error.localizedDescription, privacy: .public)")
-            profile = nil
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            isLoaded = true
+            return
+        }
+        let url = fileURL
+
+        Task.detached(priority: .userInitiated) { [self] in
+            let loaded: FaceProfile?
+            do {
+                let sealed = try Data(contentsOf: url)
+                let plain = try EnclaveCrypto.open(sealed)
+                loaded = try JSONDecoder().decode(FaceProfile.self, from: plain)
+            } catch {
+                // 암호화 키가 바뀐 경우(앱 재서명 등) 여기로 온다. 조용히 무시하지 말고 알린다.
+                Log.face.error("등록 얼굴을 읽지 못했습니다: \(error.localizedDescription, privacy: .public)")
+                loaded = nil
+            }
+
+            await MainActor.run {
+                self.profile = loaded
+                self.isLoaded = true
+                if let loaded {
+                    Log.face.info("등록 얼굴 로드됨 (샘플 \(loaded.samples.count)개)")
+                }
+                AppState.shared.refreshStatus()
+            }
         }
     }
 
@@ -127,6 +151,7 @@ final class FaceStore: ObservableObject {
     // MARK: 등록
 
     func beginEnrollment() {
+        isLoaded = true
         profile = FaceProfile()
     }
 
