@@ -121,13 +121,13 @@ box.stroke()
 
 let warn = NSColor(calibratedRed: 0.45, green: 0.31, blue: 0.05, alpha: 1)
 let inner = boxRect.width - 28
-drawText("⚠️  ‘그래도 열기’를 두 번 반복해야 설치가 시작됩니다", center: NSPoint(x: W / 2, y: Y(462)),
+drawText("⚠️  아래 과정을 두 번 반복해야 전체 설치가 완료됩니다", center: NSPoint(x: W / 2, y: Y(462)),
          size: 13.5, weight: .semibold, color: warn, maxWidth: inner)
-drawText("우클릭 → 열기 → 시스템 설정 → 개인정보 보호 및 보안 → ‘그래도 열기’ → 암호 입력",
+drawText("설치 도우미 우클릭 → 열기 → 시스템 설정 → 개인정보 보호 및 보안 → ‘그래도 열기’ → 암호 입력",
          center: NSPoint(x: W / 2, y: Y(485)), size: 10.5, weight: .regular, color: gray, maxWidth: inner)
-drawText("‘Open Anyway’ is needed twice", center: NSPoint(x: W / 2, y: Y(513)),
+drawText("Repeat the steps below twice to finish installing", center: NSPoint(x: W / 2, y: Y(513)),
          size: 12, weight: .semibold, color: warn, maxWidth: inner)
-drawText("Right-click → Open → System Settings → Privacy & Security → ‘Open Anyway’ → password",
+drawText("Right-click Install Helper → Open → System Settings → Privacy & Security → ‘Open Anyway’ → password",
          center: NSPoint(x: W / 2, y: Y(534)), size: 10.5, weight: .regular, color: faint, maxWidth: inner)
 
 NSGraphicsContext.restoreGraphicsState()
