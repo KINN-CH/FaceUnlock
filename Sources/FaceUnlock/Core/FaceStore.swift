@@ -134,6 +134,9 @@ final class FaceStore: ObservableObject {
                     Log.face.info("등록 얼굴 로드됨 (샘플 \(loaded.samples.count)개)")
                 }
                 AppState.shared.refreshStatus()
+                // 잠금화면에서 앱이 시작된 경우, 잠김 처리가 이 로드보다 먼저
+                // 끝나 걸러졌다. 준비가 됐으니 그 세션을 지금 시작한다.
+                AppState.shared.resumeIfLocked()
             }
         }
     }

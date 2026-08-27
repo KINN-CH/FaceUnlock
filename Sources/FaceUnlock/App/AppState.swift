@@ -31,6 +31,32 @@ final class AppState: ObservableObject {
             }
         }
 
+        /// 잠금화면 오버레이 문구. `nil` 이면 띄우지 않는다.
+        ///
+        /// 메뉴바 라벨과 따로 두는 이유: 여기서는 상태를 알리는 게 아니라
+        /// **지시**를 해야 한다. "눈을 깜빡이세요" 처럼 다음에 뭘 할지가 보여야
+        /// 사용자가 카메라 앞에서 멈칫하지 않는다.
+        var lockScreenText: String? {
+            switch self {
+            case .watching:       return "얼굴을 찾고 있습니다"
+            case .matching:       return "얼굴을 확인하는 중"
+            case .blinkChallenge: return "눈을 깜빡여 주세요"
+            case .unlocking:      return "잠금을 해제하는 중"
+            case .failed:         return "얼굴 인식 실패 — 비밀번호를 입력하세요"
+            // 잠겨 있지 않거나 준비가 안 된 상태에서는 띄울 이유가 없다.
+            case .disabled, .needsSetup, .idle: return nil
+            }
+        }
+
+        var lockScreenSymbol: String {
+            switch self {
+            case .blinkChallenge: return "eye"
+            case .unlocking:      return "lock.open"
+            case .failed:         return "exclamationmark.triangle"
+            default:              return "faceid"
+            }
+        }
+
         var label: String {
             switch self {
             case .disabled:            return "꺼짐"
@@ -45,7 +71,12 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published private(set) var status: Status = .disabled
+    @Published private(set) var status: Status = .disabled {
+        didSet {
+            guard status != oldValue else { return }
+            LockOverlayController.shared.update(for: status)
+        }
+    }
     /// 마지막 인증 시도의 유사도 점수. 임계값 튜닝용으로 설정 화면에 보여준다.
     @Published private(set) var lastScore: Float?
 
@@ -130,6 +161,7 @@ final class AppState: ObservableObject {
                     Log.app.error("비밀번호 금고를 열 수 없습니다 — 설정에서 재등록이 필요합니다")
                 }
                 self.refreshStatus()
+                self.resumeIfLocked()
             }
         }
     }
@@ -224,6 +256,18 @@ final class AppState: ObservableObject {
         status = .watching
         camera.start()
         Log.app.info("인증 세션 시작")
+    }
+
+    /// 잠긴 상태에서 준비가 **뒤늦게** 끝났을 때 세션을 다시 시작한다.
+    ///
+    /// 앱이 잠금화면에서 실행되면(재부팅·재시작 직후) 등록 얼굴 복호화가
+    /// 잠김 처리보다 늦게 끝난다. 그때 한 번 걸러진 뒤 재시도가 없으면
+    /// 그 잠금 세션 동안은 얼굴로 열리지 않는다.
+    func resumeIfLocked() {
+        guard session == nil, LockMonitor.screenIsLockedNow() else { return }
+        guard setupBlocker() == nil else { return }
+        Log.app.info("준비 완료 — 잠긴 상태라 인증 세션을 다시 시작합니다")
+        handleScreenLocked()
     }
 
     private func handleScreenUnlocked() {
