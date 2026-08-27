@@ -3,8 +3,7 @@
 # FaceUnlock
 
 ### Macbook을 Face id로 열수있는 앱
-### (맥북 유저가)
-### (Touch id가 없어 직접 만든)
+### (Touch id가 없는 맥북 유저가 직접 만든)
 **Face unlock for the Mac lock screen — a menu bar app, no Xcode required.**
 
 카메라가 얼굴을 알아보면 잠금 화면을 대신 풀어줍니다.<br>
