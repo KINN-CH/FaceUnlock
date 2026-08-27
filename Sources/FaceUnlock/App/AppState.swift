@@ -99,48 +99,60 @@ final class AppState: ObservableObject {
 
     private var permissionTimer: Timer?
 
-    /// 잠겨 있는 동안 계속 다시 시도하기 위한 타이머.
+    // MARK: 인식 창(window)
+
+    /// 이 앱이 일해야 하는 유일한 순간은 **잠긴 상태에서 화면이 켜지는 그때**다.
     ///
-    /// 예전에는 잠금 1회당 세션 1회였다. 깜빡임을 놓치거나 얼굴을 못 찾아서
-    /// 한 번 시간이 초과되면, 그 잠금이 풀릴 때까지 **다시는 시도하지 않았다.**
-    /// 사용자 입장에서는 "아무리 깜빡여도 안 열린다" 로 보인다.
+    /// 예전에는 "잠겨 있고 화면이 켜져 **있는가**" 라는 *상태* 로 판단했다.
+    /// 그래서 조건이 유지되는 내내 카메라가 돌았다 — 무언가가 화면을 붙잡고
+    /// 있으면(크롬의 "Video Wake Lock" 처럼) 그 몇 분 동안 계속. 실제 전원
+    /// 로그에 4분 39초짜리 붙잡기가 남아 있다.
+    ///
+    /// 지금은 "화면이 켜**졌는가**" 라는 *사건* 으로 판단한다. 사건이 오면 창을
+    /// 열고, 성공·실패·시간초과·화면 꺼짐 중 하나가 오면 닫는다.
+    /// **창 밖에서는 카메라도 타이머도 예열도 전부 0이다.**
+    ///
+    /// 화면이 꺼진 동안 아무것도 안 돌려도 잃는 게 없다 — 화면이 자면 카메라도
+    /// 같이 자서 프레임이 아예 안 온다([AwakeWindow] 에 실측이 있다).
+    /// 원래부터 아무 일도 할 수 없는 구간이다.
+    ///
+    /// 창이 닫힐 시각. nil 이면 창이 닫혀 있다는 뜻이다.
+    private var windowDeadline: CFTimeInterval?
+    /// 창이 열려 있는 **동안에만** 도는 타이머. 카메라가 죽었는지 살피고,
+    /// 준비가 늦게 끝났거나 주입이 한 번 빗나간 경우 세션을 다시 세운다.
     private var retryTimer: Timer?
-    /// 화면이 켜지는 순간을 알려주는 옵저버.
+    private let retryInterval: TimeInterval = 2
+    /// 인식 제한시간 뒤로 더 주는 여유.
+    ///
+    /// [AuthSession] 의 제한시간은 **프레임이 들어와야** 확인된다. 카메라가
+    /// 한 장도 못 주면 시간 초과조차 나지 않으므로, 창을 닫는 마지막
+    /// 안전장치가 필요하다.
+    private let windowGrace: TimeInterval = 10
+    /// 사용자가 **직접 잠갔을 때** 곧바로 창을 열 것인가.
+    ///
+    /// 기본은 false — 직접 잠근 데는 이유가 있다. [handleScreenLocked] 참조.
+    private let opensWindowOnManualLock = false
+
+    /// 화면이 켜지는 순간.
     private var wakeObserver: NSObjectProtocol?
-    /// 모든 디스플레이가 꺼진 시점. 켜져 있으면 nil.
-    private var displaysSleptAt: CFTimeInterval?
-    /// 화면이 다 꺼진 뒤에도 계속 시도할 시간.
+    /// 시스템 절전에서 깨어나는 순간.
     ///
-    /// 예전에는 120초였다. 잠금 버튼을 누르고 얼굴을 들이미는 시간을 넉넉히
-    /// 덮으려는 의도였는데, 두 가지 이유로 잘못된 값이다.
-    ///
-    /// 1. **화면이 자는 동안에는 카메라가 어차피 프레임을 안 준다.** 잠긴 직후
-    ///    0.7초만 프레임이 오고 끊기는 게 로그에 그대로 남았다. 장치를 다시
-    ///    열어도 똑같다. 그 시간 동안 카메라를 켜둬봐야 배터리와 표시등만 쓴다.
-    /// 2. 밤새 자리를 비운 경우와 구분되지 않는다.
-    ///
-    /// 그래서 짧게만 준다 — 잠김/절전 전환 중에 상태가 한두 번 튀는 걸
-    /// 견디는 정도다. 화면이 다시 켜지면 [handleScreensDidWake] 가 즉시
-    /// 카메라를 되살린다.
-    private let graceAfterDisplaySleep: CFTimeInterval = 5
+    /// 덮개를 열 때 이 알림과 `screensDidWake` 중 어느 쪽이 먼저 올지는
+    /// 상황마다 다르다. 이제 창을 여는 길이 사건뿐이라 하나만 듣다가 놓치면
+    /// 그 잠금 동안 얼굴 인식이 통째로 죽는다. 그래서 양쪽을 다 듣는다.
+    private var systemWakeObserver: NSObjectProtocol?
+    /// 화면이 꺼지는 순간 — 창을 닫는 신호.
+    /// 예전에는 이 알림을 안 듣고 2초마다 디스플레이 상태를 물어봤다.
+    private var sleepObserver: NSObjectProtocol?
+
     /// 이번 시도를 시작한 시각. 카메라 감시용.
     private var attemptStartedAt: CFTimeInterval?
     /// 이 시간 동안 프레임이 한 장도 안 오면 카메라가 죽은 것으로 본다.
     private let stallLimit: CFTimeInterval = 5
-    private let retryInterval: TimeInterval = 2
 
-    /// 파이프라인 예열 타이머. 잠기기 전에 모델을 올려둔다 — 이유는 [Warmup].
-    private var warmupTimer: Timer?
-    private let warmupInterval: TimeInterval = 60
-    /// 모델을 백그라운드에서 올리는 중인가. [startWarmupLoop] 은 앱 시작과
-    /// 설정 구독 양쪽에서 불리므로, 막지 않으면 `.mlpackage` 를 두 번 올린다.
+    /// 모델을 백그라운드에서 올리는 중인가. 앱 시작과 설정 구독 양쪽에서
+    /// 불리므로, 막지 않으면 `.mlpackage` 를 두 번 올린다.
     private var preloadingModel = false
-    /// 잠긴 직후 화면을 붙잡아 두는 시간.
-    ///
-    /// macOS 가 잠금 5초 뒤에 화면을 끄는데, 화면이 자면 카메라도 잔다.
-    /// 예열된 상태에서 인식은 1초면 끝나므로 이 창이면 넉넉하다. 더 길게
-    /// 잡으면 잠그고 자리를 뜬 사람의 화면이 그만큼 켜져 있는다.
-    private let awakeWindow: TimeInterval = 10
     /// 인증하는 동안 App Nap 을 막는 표. 자세한 이유는 [startAttempt].
     private var authActivity: NSObjectProtocol?
 
@@ -164,21 +176,26 @@ final class AppState: ObservableObject {
         lockMonitor.onUnlock = { [weak self] in self?.handleScreenUnlocked() }
         lockMonitor.start()
 
-        // 화면이 켜지는 순간을 잡는다.
-        //
-        // 재시도 타이머만으로도 결국 다시 켜지지만 최대 2초가 밀린다.
-        // 사용자가 키를 눌러 화면을 깨우고 카메라를 쳐다보는 그 2초는
-        // "왜 안 켜지지" 로 느껴진다.
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        // 창을 여닫는 세 가지 사건. 이제 이것 말고는 카메라를 켜는 길이 없다.
+        let center = NSWorkspace.shared.notificationCenter
+        wakeObserver = center.addObserver(
             forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.handleScreensDidWake() }
+                MainActor.assumeIsolated { self?.handleWakeEvent("화면이 켜짐") }
+            }
+        systemWakeObserver = center.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleWakeEvent("절전에서 깨어남") }
+            }
+        sleepObserver = center.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.closeWindow("화면이 꺼짐") }
             }
 
         settings.$faceUnlockEnabled
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.refreshStatus()
-                self?.startWarmupLoop()
+                self?.preloadPipelineIfEnabled()
             }
             .store(in: &cancellables)
 
@@ -197,37 +214,31 @@ final class AppState: ObservableObject {
         Log.app.info("준비 상태 — \(ready, privacy: .public)")
 
         recheckVault()
-        startWarmupLoop()
+        preloadPipelineIfEnabled()
     }
 
-    // MARK: 예열
+    // MARK: 모델 예열
 
-    /// 잠기기 전에 인식 파이프라인을 데워 두고, 1분마다 다시 데운다.
+    /// 모델을 앱 시작 때 **한 번만** 백그라운드에서 올린다.
     ///
-    /// 왜 이게 속도의 핵심인지는 [Warmup] 에 로그와 함께 적어두었다.
-    /// 요약하면 잠긴 뒤 첫 인식이 6.3초, 두 번째가 0.69초였고 그 차이가
-    /// 전부 첫 추론 비용이었다.
-    private func startWarmupLoop() {
-        warmupTimer?.invalidate()
-        warmupTimer = nil
+    /// 예전에는 여기에 60초짜리 반복 타이머가 있었다. 뉴럴 엔진이 놀고 있는
+    /// 모델을 메모리에서 쫓아내서, 오래 안 쓰면 첫 추론이 6.3초까지 걸렸기
+    /// 때문이다(두 번째는 0.69초). 잠기지 않은 시간 내내 1분마다 앱을 깨우는
+    /// 대가로 그 6.3초를 피한 셈이다.
+    ///
+    /// 지금은 [EmbeddingModel] 이 뉴럴 엔진을 쓰지 않는다. 쫓겨날 일이 없으니
+    /// 다시 데울 일도 없다 — 그래서 타이머를 통째로 지웠다. 자세한 측정은
+    /// [EmbeddingModel] 의 주석에 있다.
+    private func preloadPipelineIfEnabled() {
         guard settings.faceUnlockEnabled else { return }
-
         preloadPipeline()
-        warmupTimer = Timer.scheduledTimer(withTimeInterval: warmupInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.settings.faceUnlockEnabled else { return }
-                // 잠긴 동안에는 진짜 프레임이 파이프라인을 계속 데우고 있다.
-                guard !self.lockMonitor.isLocked else { return }
-                Warmup.run(model: self.model)
-            }
-        }
     }
 
     /// 모델을 백그라운드에서 올린 뒤 한 번 돌려본다.
     ///
-    /// `EmbeddingModel()` 은 `.mlpackage` 를 컴파일하느라 3초쯤 걸린다.
-    /// 지금까지는 이걸 **첫 잠금 때 메인 스레드에서** 치렀다 — 하필 사용자가
-    /// 카메라 앞에서 기다리는 그 순간이다.
+    /// `EmbeddingModel()` 은 컴파일본이 낡았으면 `.mlpackage` 를 다시
+    /// 컴파일하느라 3초쯤 걸린다. 이걸 **첫 잠금 때 메인 스레드에서** 치르면
+    /// 하필 사용자가 카메라 앞에서 기다리는 그 순간에 앱이 멈춘다.
     private func preloadPipeline() {
         if let model {
             Warmup.run(model: model)
@@ -327,83 +338,114 @@ final class AppState: ObservableObject {
 
     // MARK: 잠금 전이
 
+    /// 잠금이 걸렸다.
+    ///
+    /// **여기서는 카메라를 켜지 않는다.** 사용자가 직접 잠갔다면 이유가 있어서
+    /// 잠근 것이다. 그런데 예전 코드는 잠기자마자 인식을 시작했고, 재시도
+    /// 쿨다운도 없었다. 깜빡임 확인이 꺼진 기본 설정에서는 잠금 버튼을 누른
+    /// 채 화면을 계속 보고 있으면 **1초쯤 뒤에 도로 풀렸다.** 잠금이 잠금
+    /// 구실을 못 한 셈이다.
+    ///
+    /// 잠긴 뒤 macOS 는 5~6초 안에 화면을 끄므로(실측은 [AwakeWindow] 참조),
+    /// 다시 쓰려고 키를 누르거나 트랙패드를 만지면 그때 화면이 켜지고
+    /// [handleWakeEvent] 가 창을 연다. 즉 아무것도 잃지 않고 몇 초만 늦어진다.
+    ///
+    /// 잠그자마자 바로 얼굴로 풀고 싶다면 [opensWindowOnManualLock] 를 true 로
+    /// 바꾸면 예전 동작으로 돌아간다.
     private func handleScreenLocked() {
-        // 새 잠금은 유예 시간을 새로 준다. 잠금 버튼으로 잠그면 화면이 바로
-        // 꺼지는데, 직전 잠금에서 쓴 유예가 남아 있으면 안 된다.
-        displaysSleptAt = nil
-
-        // 이미 화면이 꺼진 채로 잠긴 경우(덮개를 닫았거나, 절전으로 꺼진 뒤
-        // 잠금이 걸린 경우) 카메라를 켜봐야 프레임이 오지 않는다. 화면이
-        // 켜질 때 [handleScreensDidWake] 가 시작한다.
-        guard anyDisplayAwake() else {
-            Log.app.info("화면이 꺼진 채 잠김 — 화면이 켜지면 시작합니다")
-            startRetryLoop()
+        guard settings.faceUnlockEnabled else { return }
+        guard opensWindowOnManualLock else {
+            Log.app.info("잠김 — 화면이 다시 켜지면 인식을 시작합니다")
             return
         }
-
-        // 화면이 꺼지면 카메라도 멈춘다. 얼굴을 들이밀 창을 조금 벌려준다.
-        AwakeWindow.hold(for: awakeWindow)
-        startAttempt()
-        startRetryLoop()
+        guard anyDisplayAwake() else {
+            Log.app.info("화면이 꺼진 채 잠김 — 화면이 켜지면 시작합니다")
+            return
+        }
+        openWindow("잠김")
     }
 
-    /// 화면이 켜졌다. 잠겨 있다면 곧바로 카메라를 되살린다.
+    /// 화면이 켜졌거나 시스템이 절전에서 깨어났다 — 창을 열 유일한 사건.
     ///
-    /// 화면이 자는 동안에는 카메라를 꺼두므로(배터리·표시등), 깨어난 이 시점이
-    /// 얼굴 인식을 시작할 시점이다.
-    private func handleScreensDidWake() {
-        displaysSleptAt = nil
-        guard settings.faceUnlockEnabled, session == nil else { return }
+    /// 두 알림을 모두 듣는다. 덮개를 열거나 시스템 절전에서 복귀할 때는
+    /// `screensDidWake` 가 안 오고 `didWake` 만 오는 경우가 있고, 반대로 화면만
+    /// 껐다 켜면 `didWake` 는 안 온다. 하나를 놓치면 그 상황에서 얼굴 인식이
+    /// 통째로 죽으므로 둘 다 듣고, 창 쪽에서 중복을 걸러낸다.
+    private func handleWakeEvent(_ reason: String) {
+        guard settings.faceUnlockEnabled else { return }
         guard lockMonitor.isLocked || LockMonitor.screenIsLockedNow() else { return }
         // 주입이 진행 중이면 끼어들지 않는다. `performUnlock` 이 세션을 먼저
-        // 비우기 때문에 위의 `session == nil` 은 통과해버린다. 게다가 주입 전에
-        // 부르는 `caffeinate` 가 바로 이 알림을 일으키므로, 막지 않으면
-        // **자기가 깨운 화면 때문에 두 번째 인증**이 시작된다 — 실측 로그에
-        // "깨우는 사이 잠금이 해제됨 — 주입하지 않음" 이 남은 경위가 이것이다.
+        // 비우기 때문에 `session == nil` 만 봐서는 통과해버린다. 게다가 주입
+        // 전에 부르는 `caffeinate` 가 바로 이 알림을 일으키므로, 막지 않으면
+        // **자기가 깨운 화면 때문에 두 번째 인증**이 시작된다.
         if case .unlocking = status { return }
         guard setupBlocker() == nil else { return }
-        Log.app.info("화면이 켜짐 — 인증 세션을 시작합니다")
-        startAttempt()
-        startRetryLoop()
+        openWindow(reason)
     }
 
-    // MARK: 재시도 루프
+    // MARK: 창 여닫기
 
-    /// 잠겨 있는 한 계속 다시 시도한다.
+    /// 인식 창을 연다. 이미 열려 있으면 시한만 미룬다.
     ///
-    /// 화면이 완전히 꺼진 채로 오래 지나면 멈춘다 — 밤새 카메라를 돌리며
-    /// 배터리를 먹고 렌즈 옆 표시등을 켜둘 이유가 없다. 다만 "꺼졌다" 를
-    /// 곧바로 "아무도 없다" 로 읽으면 안 된다. 자세한 이유는
-    /// [peopleMightBeHere] 참조.
-    private func startRetryLoop() {
+    /// 창이 열려 있는 동안에만 카메라와 재시도 타이머가 돈다.
+    private func openWindow(_ reason: String) {
+        let alreadyOpen = windowDeadline != nil
+        windowDeadline = CACurrentMediaTime() + settings.recognitionTimeout + windowGrace
+
+        // 잠금화면은 금방 다시 화면을 재운다. 인식하는 중에 꺼지면 카메라도
+        // 같이 자므로 인식하는 동안은 화면을 붙잡아 둔다.
+        //
+        // 붙잡는 시간은 **인식 제한시간까지만**이다. 창의 시한에는 여유
+        // 10초가 더 붙어 있지만, 그 여유는 프레임이 한 장도 안 올 때 창을
+        // 닫으려고 둔 것이다 — 프레임이 안 오는 동안 화면을 켜둘 이유는 없다.
+        // 인식이 끝나거나 실패하면 [closeWindow] 가 시한 전에 놓는다.
+        AwakeWindow.hold(for: settings.recognitionTimeout)
+
+        guard !alreadyOpen else { return }
+        Log.app.info("인식 창 열림 — \(reason, privacy: .public)")
+        startAttempt()
         retryTimer?.invalidate()
         retryTimer = Timer.scheduledTimer(withTimeInterval: retryInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.retryTick() }
         }
     }
 
-    private func stopRetryLoop() {
+    /// 인식 창을 닫고 카메라·타이머·화면 붙잡기를 전부 놓는다.
+    ///
+    /// 창 밖에서 이 앱이 쓰는 자원은 0이어야 한다. 여러 경로(성공·실패·화면
+    /// 꺼짐·잠금 해제)에서 불리므로 이미 닫혀 있으면 조용히 넘어간다.
+    private func closeWindow(_ reason: String) {
+        guard windowDeadline != nil else { return }
+        windowDeadline = nil
         retryTimer?.invalidate()
         retryTimer = nil
+        endSession()
+        AwakeWindow.release()
+        Log.app.info("인식 창 닫힘 — \(reason, privacy: .public)")
+        refreshStatus()
     }
 
+    /// 창이 열려 있는 동안 2초마다. 창을 닫을 이유가 있는지 보고, 없으면
+    /// 끊긴 세션을 다시 세운다.
     private func retryTick() {
         guard lockMonitor.isLocked || LockMonitor.screenIsLockedNow() else {
-            stopRetryLoop()
+            closeWindow("잠금이 풀림")
             return
         }
         guard settings.faceUnlockEnabled else {
-            stopRetryLoop()
+            closeWindow("기능이 꺼짐")
             return
         }
-
-        // 사람이 없을 법한 상태가 충분히 이어졌으면 접고 기다린다.
-        guard peopleMightBeHere() else {
-            if session != nil {
-                Log.app.info("디스플레이가 꺼진 채 오래 지남 — 시도를 접고 대기")
-                endSession()
-                refreshStatus()
-            }
+        // 화면이 꺼졌다면 카메라도 잔다 — 프레임이 안 오니 계속 켜둘 이유가 없다.
+        // `screensDidSleep` 알림이 정상 경로지만, 놓쳤을 때를 대비한 확인이다.
+        guard anyDisplayAwake() else {
+            closeWindow("화면이 꺼짐")
+            return
+        }
+        // 마지막 안전장치. 프레임이 한 장도 안 오면 [AuthSession] 의 제한시간이
+        // 확인되지 않아 시간 초과조차 나지 않는다.
+        if let deadline = windowDeadline, CACurrentMediaTime() > deadline {
+            closeWindow("시간 초과")
             return
         }
 
@@ -413,11 +455,6 @@ final class AppState: ObservableObject {
         if case .unlocking = status { return }
 
         // 카메라만 죽고 세션은 살아 있는 상태를 걷어낸다.
-        //
-        // AuthSession 의 제한시간은 **프레임이 들어와야** 확인된다. 프레임이 한
-        // 장도 안 오면 시간 초과조차 나지 않고, 세션은 nil 이 되지 않으며,
-        // 아래 `session == nil` 가드에 계속 걸려서 잠금이 풀릴 때까지 그대로
-        // 멈춰 있는다. 표시등도 안 켜진다 — "가끔 카메라가 안 뜬다" 가 이것이다.
         if session != nil, cameraLooksStalled() {
             Log.app.error("카메라에서 프레임이 오지 않습니다 — 인증 세션을 새로 시작합니다")
             // 카메라는 건드리지 않는다. 죽었다면 CameraSession 이 스스로
@@ -435,34 +472,6 @@ final class AppState: ObservableObject {
         startAttempt()
     }
 
-    /// 지금 카메라 앞에 사람이 있을 가능성이 있는가.
-    ///
-    /// 이전에는 `CGDisplayIsAsleep(CGMainDisplayID())` 하나만 봤는데, 그게
-    /// 두 가지를 다 틀렸다.
-    ///
-    /// 1. **메인 디스플레이 하나만** 봤다. 외장 모니터를 쓰면 잠글 때 그쪽이
-    ///    먼저 대기 상태로 들어가고 내장 화면은 아직 켜져 있다. 실제로 잠근 지
-    ///    6초 만에 "디스플레이 꺼짐" 으로 세션을 죽인 로그가 남았다 —
-    ///    사용자는 그 앞에 앉아 있었다.
-    /// 2. **잠금 버튼 직후를 못 쓰게 만들었다.** 잠금 버튼은 잠금과 동시에
-    ///    화면을 끈다. 그 순간이 바로 사용자가 얼굴을 들이미는 때인데,
-    ///    화면이 꺼졌다는 이유로 시도를 안 했다.
-    ///
-    /// 그래서 (a) 켜진 화면이 **하나라도** 있으면 사람이 있다고 보고,
-    /// (b) 전부 꺼졌더라도 꺼진 직후 [graceAfterDisplaySleep] 동안은 계속
-    /// 시도한다. 유예는 전환 중에 상태가 튀는 걸 견디는 용도지, 꺼진 화면
-    /// 앞에서 얼굴을 기다리는 용도가 아니다 — 그건 어차피 안 된다.
-    private func peopleMightBeHere() -> Bool {
-        if anyDisplayAwake() {
-            displaysSleptAt = nil
-            return true
-        }
-        let now = CACurrentMediaTime()
-        let since = displaysSleptAt ?? now
-        displaysSleptAt = since
-        return now - since < graceAfterDisplaySleep
-    }
-
     /// 카메라가 켜져 있다고 해놓고 실제로는 프레임을 못 주고 있는가.
     private func cameraLooksStalled() -> Bool {
         guard let started = attemptStartedAt else { return false }
@@ -474,6 +483,12 @@ final class AppState: ObservableObject {
         return idle > stallLimit
     }
 
+    /// 켜져 있는 디스플레이가 하나라도 있는가.
+    ///
+    /// 메인 디스플레이만 보면 안 된다. 외장 모니터를 쓰면 잠글 때 그쪽이 먼저
+    /// 대기로 들어가고 내장 화면은 아직 켜져 있다. 실제로 잠근 지 6초 만에
+    /// "디스플레이 꺼짐" 으로 세션을 죽인 로그가 남았다 — 사용자는 그 앞에
+    /// 앉아 있었다.
     private func anyDisplayAwake() -> Bool {
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
@@ -487,7 +502,7 @@ final class AppState: ObservableObject {
     }
 
     /// 인증 시도 1회. 실패해도 여기서는 아무것도 되돌리지 않는다 —
-    /// 재시도는 [startRetryLoop] 가 맡는다.
+    /// 창이 열려 있는 동안의 재시도는 [retryTick] 이 맡는다.
     private func startAttempt() {
         // 잠겼는데 아무 일도 안 일어나면 이유를 알 수 있어야 한다.
         // 조용히 return 하면 사용자도 나도 왜 안 되는지 알 수 없다.
@@ -555,18 +570,15 @@ final class AppState: ObservableObject {
     func resumeIfLocked() {
         guard session == nil, LockMonitor.screenIsLockedNow() else { return }
         guard setupBlocker() == nil else { return }
+        // 화면이 꺼져 있으면 켜질 때 [handleWakeEvent] 가 연다.
+        guard anyDisplayAwake() else { return }
         Log.app.info("준비 완료 — 잠긴 상태라 인증 세션을 다시 시작합니다")
-        handleScreenLocked()
+        openWindow("준비 완료")
     }
 
     private func handleScreenUnlocked() {
-        stopRetryLoop()
-        endSession()
-        AwakeWindow.release()
+        closeWindow("잠금이 풀림")
         refreshStatus()
-        // 다음 잠금을 위해 다시 데워 둔다. 방금 인증이 돌았으니 사실상
-        // 타이머 재무장 이상의 의미는 없지만, 잠금 없이 풀린 경우도 있다.
-        startWarmupLoop()
     }
 
     /// 인증 시도를 끝낸다.
@@ -612,12 +624,15 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// 인증이 실패하거나 제한시간을 넘겼다 — 창을 닫는다.
+    ///
+    /// 예전에는 여기서 카메라를 켜둔 채 2초 뒤 다시 시도했다. 잠겨 있는 한
+    /// 끝이 없는 순환이라, 앞에 아무도 없어도 카메라가 계속 돌았다.
+    /// 지금은 접는다. 창을 다시 붙잡던 화면도 놓으므로 macOS 가 곧 화면을
+    /// 재우고, 사용자가 다시 다가와 화면을 깨우면 그 사건이 새 창을 연다.
     private func abort(_ reason: String) {
         Log.app.error("인증 중단: \(reason, privacy: .public)")
-        // 아직 잠겨 있으면 2초 뒤에 또 시도한다. 그 사이 카메라를 껐다 켜봐야
-        // 장치만 흔들린다. 화면이 풀리거나 사람이 없다고 판단되면 그때 끈다.
-        let stillLocked = lockMonitor.isLocked || LockMonitor.screenIsLockedNow()
-        endSession(releaseCamera: !stillLocked)
+        closeWindow("인증 실패")
         status = .failed(reason)
     }
 
@@ -647,8 +662,7 @@ final class AppState: ObservableObject {
                     self.injectionFailures += 1
                     if self.injectionFailures >= self.maxInjectionFailures {
                         self.passwordRejected = true
-                        self.stopRetryLoop()
-                        self.endSession()
+                        self.closeWindow("비밀번호 연속 거부")
                         Log.app.error("저장된 비밀번호가 연속 거부됨 — 자동 해제를 중단합니다")
                         self.status = .needsSetup(.passwordReenroll)
                     } else {

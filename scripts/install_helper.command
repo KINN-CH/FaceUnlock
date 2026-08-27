@@ -122,6 +122,10 @@ else
     mkdir -p "$WORK/tools"
     cp "$DIR/.tools/fetch_arcface.py" "$WORK/tools/"
 
+    # pip 캐시도 작업 폴더 안에 둔다. 기본값(~/Library/Caches/pip)에 두면
+    # 아래에서 $WORK 를 지워도 torch 휠 등 수백 MB 가 그대로 남는다.
+    export PIP_CACHE_DIR="$WORK/pipcache"
+
     if [ ! -d "$WORK/.venv" ]; then
         "$PY" -m venv "$WORK/.venv"
     fi

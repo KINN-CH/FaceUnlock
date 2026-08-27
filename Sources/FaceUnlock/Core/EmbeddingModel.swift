@@ -41,7 +41,31 @@ final class EmbeddingModel {
         let compiled = try Self.compiledModelURL()
 
         let config = MLModelConfiguration()
-        config.computeUnits = .all      // Neural Engine 우선
+        // 뉴럴 엔진을 쓰지 않는다 — 이 앱의 쓰임새에서는 CPU 가 더 빠르다.
+        //
+        // 같은 ArcFace.mlmodelc 로 실측한 값(M 시리즈, 초당 20프레임 기준):
+        //
+        //     .all (뉴럴 엔진)  로드 1662ms | 첫 추론    7ms | 이후 2.15ms
+        //     .cpuAndGPU        로드  317ms | 첫 추론 1331ms | 이후 10.41ms
+        //     .cpuOnly          로드  145ms | 첫 추론   14ms | 이후  8.76ms
+        //
+        // 프레임당으로 보면 뉴럴 엔진이 4배 빠르지만, 그 차이는 6.6ms 다.
+        // 프레임 간격이 50ms 이므로 사용자가 느낄 수 있는 차이가 아니다.
+        //
+        // 정작 체감되는 건 **차가운 상태에서 첫 얼굴까지** 걸리는 시간인데,
+        // 거기서는 뒤집힌다: 1.67초 대 0.16초, 10배 차이다. 게다가 뉴럴 엔진은
+        // 한동안 안 쓰인 모델을 메모리에서 내리기 때문에(실측 로그에
+        // `unloadModel` 이 그대로 찍힌다) 첫 추론이 6.3초까지 늘어난 적도 있다.
+        // 이 앱은 잠금 사건이 올 때만 잠깐 도는 구조라 뉴럴 엔진은 **거의 항상
+        // 차갑다** — 최악의 경우만 골라 밟는 셈이다.
+        //
+        // 예전에는 이걸 1분짜리 예열 타이머로 가렸다. CPU 는 내려갈 일이
+        // 없으니 그 타이머도 함께 지웠다.
+        //
+        // 두 백엔드가 같은 답을 주는지도 확인했다 — 같은 입력에 대해 코사인
+        // 유사도 평균 0.998052 / 최저 0.997287. 판정 임계 0.48 에 비하면
+        // 무시할 수 있는 차이라, 이미 등록한 얼굴은 그대로 인식된다.
+        config.computeUnits = .cpuOnly
 
         do {
             model = try MLModel(contentsOf: compiled, configuration: config)
