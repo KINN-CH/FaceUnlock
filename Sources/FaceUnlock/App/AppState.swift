@@ -129,6 +129,21 @@ final class AppState: ObservableObject {
     private let stallLimit: CFTimeInterval = 5
     private let retryInterval: TimeInterval = 2
 
+    /// 파이프라인 예열 타이머. 잠기기 전에 모델을 올려둔다 — 이유는 [Warmup].
+    private var warmupTimer: Timer?
+    private let warmupInterval: TimeInterval = 60
+    /// 모델을 백그라운드에서 올리는 중인가. [startWarmupLoop] 은 앱 시작과
+    /// 설정 구독 양쪽에서 불리므로, 막지 않으면 `.mlpackage` 를 두 번 올린다.
+    private var preloadingModel = false
+    /// 잠긴 직후 화면을 붙잡아 두는 시간.
+    ///
+    /// macOS 가 잠금 5초 뒤에 화면을 끄는데, 화면이 자면 카메라도 잔다.
+    /// 예열된 상태에서 인식은 1초면 끝나므로 이 창이면 넉넉하다. 더 길게
+    /// 잡으면 잠그고 자리를 뜬 사람의 화면이 그만큼 켜져 있는다.
+    private let awakeWindow: TimeInterval = 10
+    /// 인증하는 동안 App Nap 을 막는 표. 자세한 이유는 [startAttempt].
+    private var authActivity: NSObjectProtocol?
+
     let settings = Settings.shared
     let store = FaceStore.shared
     let lockMonitor = LockMonitor()
@@ -161,7 +176,10 @@ final class AppState: ObservableObject {
 
         settings.$faceUnlockEnabled
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.refreshStatus() }
+            .sink { [weak self] _ in
+                self?.refreshStatus()
+                self?.startWarmupLoop()
+            }
             .store(in: &cancellables)
 
         refreshStatus()
@@ -179,6 +197,56 @@ final class AppState: ObservableObject {
         Log.app.info("준비 상태 — \(ready, privacy: .public)")
 
         recheckVault()
+        startWarmupLoop()
+    }
+
+    // MARK: 예열
+
+    /// 잠기기 전에 인식 파이프라인을 데워 두고, 1분마다 다시 데운다.
+    ///
+    /// 왜 이게 속도의 핵심인지는 [Warmup] 에 로그와 함께 적어두었다.
+    /// 요약하면 잠긴 뒤 첫 인식이 6.3초, 두 번째가 0.69초였고 그 차이가
+    /// 전부 첫 추론 비용이었다.
+    private func startWarmupLoop() {
+        warmupTimer?.invalidate()
+        warmupTimer = nil
+        guard settings.faceUnlockEnabled else { return }
+
+        preloadPipeline()
+        warmupTimer = Timer.scheduledTimer(withTimeInterval: warmupInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.settings.faceUnlockEnabled else { return }
+                // 잠긴 동안에는 진짜 프레임이 파이프라인을 계속 데우고 있다.
+                guard !self.lockMonitor.isLocked else { return }
+                Warmup.run(model: self.model)
+            }
+        }
+    }
+
+    /// 모델을 백그라운드에서 올린 뒤 한 번 돌려본다.
+    ///
+    /// `EmbeddingModel()` 은 `.mlpackage` 를 컴파일하느라 3초쯤 걸린다.
+    /// 지금까지는 이걸 **첫 잠금 때 메인 스레드에서** 치렀다 — 하필 사용자가
+    /// 카메라 앞에서 기다리는 그 순간이다.
+    private func preloadPipeline() {
+        if let model {
+            Warmup.run(model: model)
+            return
+        }
+        guard !preloadingModel else { return }
+        preloadingModel = true
+        DispatchQueue.global(qos: .utility).async {
+            let loaded = try? EmbeddingModel()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.preloadingModel = false
+                if let loaded, self.model == nil {
+                    self.model = loaded
+                    self.modelError = nil
+                }
+                Warmup.run(model: self.model)
+            }
+        }
     }
 
     /// 복호화 경로를 화면이 풀려 있는 동안 한 번 돌려본다.
@@ -273,6 +341,8 @@ final class AppState: ObservableObject {
             return
         }
 
+        // 화면이 꺼지면 카메라도 멈춘다. 얼굴을 들이밀 창을 조금 벌려준다.
+        AwakeWindow.hold(for: awakeWindow)
         startAttempt()
         startRetryLoop()
     }
@@ -285,6 +355,12 @@ final class AppState: ObservableObject {
         displaysSleptAt = nil
         guard settings.faceUnlockEnabled, session == nil else { return }
         guard lockMonitor.isLocked || LockMonitor.screenIsLockedNow() else { return }
+        // 주입이 진행 중이면 끼어들지 않는다. `performUnlock` 이 세션을 먼저
+        // 비우기 때문에 위의 `session == nil` 은 통과해버린다. 게다가 주입 전에
+        // 부르는 `caffeinate` 가 바로 이 알림을 일으키므로, 막지 않으면
+        // **자기가 깨운 화면 때문에 두 번째 인증**이 시작된다 — 실측 로그에
+        // "깨우는 사이 잠금이 해제됨 — 주입하지 않음" 이 남은 경위가 이것이다.
+        if case .unlocking = status { return }
         guard setupBlocker() == nil else { return }
         Log.app.info("화면이 켜짐 — 인증 세션을 시작합니다")
         startAttempt()
@@ -446,6 +522,20 @@ final class AppState: ObservableObject {
 
         status = .watching
         attemptStartedAt = CACurrentMediaTime()
+
+        // App Nap 을 끈다.
+        //
+        // 잠금화면에서 우리는 창 하나 없는 백그라운드 앱이다 — macOS 가
+        // 절전 대상으로 삼기 딱 좋은 조건이라, 타이머가 뭉치고 QoS 가 내려간다.
+        // 인증은 사용자가 눈앞에서 기다리는 작업이므로 그동안만 예외로 둔다.
+        // 시스템 절전 자체는 막지 않는다(`AllowingIdleSystemSleep`) — 자리를
+        // 비운 맥까지 깨워둘 이유는 없다.
+        if authActivity == nil {
+            authActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                reason: "Face unlock authentication")
+        }
+
         camera.start(owner: self,
                      onFrame: { [weak self] buffer in
                          // 카메라 큐. 여기서 메인으로 건너가면 프레임이 밀린다.
@@ -472,7 +562,11 @@ final class AppState: ObservableObject {
     private func handleScreenUnlocked() {
         stopRetryLoop()
         endSession()
+        AwakeWindow.release()
         refreshStatus()
+        // 다음 잠금을 위해 다시 데워 둔다. 방금 인증이 돌았으니 사실상
+        // 타이머 재무장 이상의 의미는 없지만, 잠금 없이 풀린 경우도 있다.
+        startWarmupLoop()
     }
 
     /// 인증 시도를 끝낸다.
@@ -485,6 +579,10 @@ final class AppState: ObservableObject {
         session?.cancel()
         session = nil
         attemptStartedAt = nil
+        if let authActivity {
+            ProcessInfo.processInfo.endActivity(authActivity)
+            self.authActivity = nil
+        }
         if releaseCamera { camera.stop(owner: self) }
     }
 
@@ -530,6 +628,8 @@ final class AppState: ObservableObject {
         // 카메라부터 끈다. 주입이 끝나면 화면이 열리므로 표시등을 계속 켜둘 이유가 없다.
         session = nil
         camera.stop(owner: self)
+        // 여기서부터는 화면을 붙잡을 이유가 없다. Unlocker 가 직접 깨운다.
+        AwakeWindow.release()
 
         // Unlocker 는 sleep 으로 타이밍을 맞춘다. 메인 스레드에서 돌리면 UI 가 멈춘다.
         DispatchQueue.global(qos: .userInitiated).async {

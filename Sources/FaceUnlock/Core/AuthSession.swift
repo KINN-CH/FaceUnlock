@@ -82,6 +82,20 @@ final class AuthSession {
     private var lastProgress: String = ""
     private var lastEmbedAt: CFTimeInterval = 0
 
+    /// 1초마다 남기는 진행 요약.
+    ///
+    /// 왜 세는가: "잠긴 직후에는 인식이 안 된다" 를 조사할 때 로그에 있는
+    /// 거라곤 세션 시작과 성공 두 줄뿐이었다. 그 사이 6초 동안 프레임이
+    /// 오긴 했는지, 얼굴은 보였는지, 점수가 몇이었는지를 알 방법이 없어서
+    /// 카메라 데몬 로그까지 뒤져야 했다. 초당 한 줄이면 다음엔 바로 보인다.
+    ///
+    /// 개수와 점수만 남긴다 — 임베딩이나 이미지는 로그에 절대 넣지 않는다.
+    private var tickStartedAt: CFTimeInterval = 0
+    private var framesInTick = 0
+    private var facesInTick = 0
+    private var embedsInTick = 0
+    private var bestScoreInTick: Float?
+
     init(roster: FaceRoster, model: EmbeddingModel, config: Config) {
         self.roster = roster
         self.model = model
@@ -93,6 +107,8 @@ final class AuthSession {
         phase = .identifying
         consecutiveMatches = 0
         blink.reset()
+        tickStartedAt = CACurrentMediaTime()
+        resetTickCounters()
     }
 
     func cancel() {
@@ -109,6 +125,8 @@ final class AuthSession {
 
     private func handle(frame pixelBuffer: CVPixelBuffer) {
         let now = CACurrentMediaTime()
+        framesInTick += 1
+        flushTickIfDue(now)
         guard now < deadline else {
             Log.face.info("인증 시간 초과")
             finish(.timedOut)
@@ -122,6 +140,8 @@ final class AuthSession {
             blink.reset()
             return
         }
+
+        facesInTick += 1
 
         guard detector.passesQualityGate(face, in: pixelBuffer) else {
             report(.faceDetected(score: nil))
@@ -206,9 +226,30 @@ final class AuthSession {
     }
 
     private func embedAndMatch(face: VNFaceObservation, in pixelBuffer: CVPixelBuffer) -> MatchResult? {
+        embedsInTick += 1
         guard let pixels = aligner.alignedPixels(from: pixelBuffer, observation: face),
               let vector = model.embed(alignedRGBA: pixels) else { return nil }
-        return roster.match(vector)
+        let result = roster.match(vector)
+        if let result, result.score > (bestScoreInTick ?? -1) { bestScoreInTick = result.score }
+        return result
+    }
+
+    // MARK: 진행 로그
+
+    private func flushTickIfDue(_ now: CFTimeInterval) {
+        guard now - tickStartedAt >= 1 else { return }
+        let best = bestScoreInTick.map { String(format: "%.3f", $0) } ?? "-"
+        let line = "프레임 \(framesInTick), 얼굴 \(facesInTick), 임베딩 \(embedsInTick), 최고 \(best)"
+        Log.face.info("인식 진행 — \(line, privacy: .public)")
+        tickStartedAt = now
+        resetTickCounters()
+    }
+
+    private func resetTickCounters() {
+        framesInTick = 0
+        facesInTick = 0
+        embedsInTick = 0
+        bestScoreInTick = nil
     }
 
     // MARK: 콜백
