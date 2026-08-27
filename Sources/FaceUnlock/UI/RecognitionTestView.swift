@@ -21,10 +21,37 @@ final class RecognitionTestController: ObservableObject {
 
     private let camera = CameraSession()
     private var session: AuthSession?
+    private var lockObserver: NSObjectProtocol?
 
     var threshold: Float { Settings.shared.matchThreshold }
 
     func makePreviewLayer() -> AVCaptureVideoPreviewLayer { camera.makePreviewLayer() }
+
+    /// 화면이 잠기면 카메라를 놓는다.
+    ///
+    /// 이 창과 실제 해제 경로는 **서로 다른 `CameraSession` 인스턴스**로 같은
+    /// 장치를 잡는다. 창을 열어둔 채 화면이 잠기면 둘이 카메라를 두고 다투고,
+    /// 그러면 정작 잠금을 풀어야 할 쪽이 프레임을 못 받는다. 진단용인 이쪽이
+    /// 양보하는 게 맞다.
+    func observeLock() {
+        guard lockObserver == nil else { return }
+        lockObserver = DistributedNotificationCenter.default().addObserver(
+            forName: LockMonitor.lockedNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.isRunning else { return }
+                    self.stop()
+                    self.headline = "중단됨"
+                    self.detail = "화면이 잠겨 카메라를 실제 잠금 해제 쪽에 넘겼습니다."
+                }
+            }
+    }
+
+    func stopObservingLock() {
+        if let lockObserver {
+            DistributedNotificationCenter.default().removeObserver(lockObserver)
+        }
+        lockObserver = nil
+    }
 
     func start() {
         guard let profile = FaceStore.shared.snapshot(), !profile.samples.isEmpty else {
@@ -175,8 +202,14 @@ struct RecognitionTestView: View {
         }
         .padding(20)
         .frame(width: 380)
-        .onAppear { controller.start() }
-        .onDisappear { controller.stop() }
+        .onAppear {
+            controller.observeLock()
+            controller.start()
+        }
+        .onDisappear {
+            controller.stopObservingLock()
+            controller.stop()
+        }
     }
 
     /// 점수와 임계값을 나란히 보여준다. 임계값을 어디에 둘지 정하려면

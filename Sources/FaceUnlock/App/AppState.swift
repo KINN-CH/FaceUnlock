@@ -89,6 +89,10 @@ final class AppState: ObservableObject {
     /// 화면이 다 꺼진 뒤에도 계속 시도할 시간.
     /// 잠금 버튼을 누르고 얼굴을 들이미는 데 걸리는 시간을 넉넉히 덮는다.
     private let graceAfterDisplaySleep: CFTimeInterval = 120
+    /// 이번 시도를 시작한 시각. 카메라 감시용.
+    private var attemptStartedAt: CFTimeInterval?
+    /// 이 시간 동안 프레임이 한 장도 안 오면 카메라가 죽은 것으로 본다.
+    private let stallLimit: CFTimeInterval = 5
     private let retryInterval: TimeInterval = 2
 
     let settings = Settings.shared
@@ -272,6 +276,19 @@ final class AppState: ObservableObject {
         // 켜지면서 **두 번째 주입**까지 나간다.
         if case .unlocking = status { return }
 
+        // 카메라만 죽고 세션은 살아 있는 상태를 걷어낸다.
+        //
+        // AuthSession 의 제한시간은 **프레임이 들어와야** 확인된다. 프레임이 한
+        // 장도 안 오면 시간 초과조차 나지 않고, 세션은 nil 이 되지 않으며,
+        // 아래 `session == nil` 가드에 계속 걸려서 잠금이 풀릴 때까지 그대로
+        // 멈춰 있는다. 표시등도 안 켜진다 — "가끔 카메라가 안 뜬다" 가 이것이다.
+        if session != nil, cameraLooksStalled() {
+            Log.app.error("카메라에서 프레임이 오지 않습니다 — 세션을 새로 시작합니다")
+            endSession()
+            refreshStatus()
+            return
+        }
+
         guard session == nil else { return }   // 이미 시도 중
         // 준비가 안 됐으면 조용히 넘긴다. startAttempt 를 부르면 2초마다
         // 같은 오류가 로그를 채운다.
@@ -306,6 +323,17 @@ final class AppState: ObservableObject {
         let since = displaysSleptAt ?? now
         displaysSleptAt = since
         return now - since < graceAfterDisplaySleep
+    }
+
+    /// 카메라가 켜져 있다고 해놓고 실제로는 프레임을 못 주고 있는가.
+    private func cameraLooksStalled() -> Bool {
+        guard let started = attemptStartedAt else { return false }
+        let now = CACurrentMediaTime()
+        // 시작 직후에는 장치가 준비될 시간을 준다. 여기서 성급하게 끊으면
+        // 세션을 계속 새로 만들면서 오히려 카메라를 못 잡는다.
+        guard now - started > stallLimit else { return false }
+        guard let idle = camera.secondsSinceLastFrame else { return true }
+        return idle > stallLimit
     }
 
     private func anyDisplayAwake() -> Bool {
@@ -355,6 +383,7 @@ final class AppState: ObservableObject {
         self.session = session
 
         status = .watching
+        attemptStartedAt = CACurrentMediaTime()
         camera.start()
         Log.app.info("인증 세션 시작")
     }
@@ -380,6 +409,7 @@ final class AppState: ObservableObject {
     private func endSession() {
         session?.cancel()
         session = nil
+        attemptStartedAt = nil
         camera.stop()
     }
 

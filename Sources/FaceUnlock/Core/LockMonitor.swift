@@ -26,7 +26,7 @@ final class LockMonitor: ObservableObject {
         started = true
 
         center.addObserver(self, selector: #selector(handleLocked),
-                           name: .init("com.apple.screenIsLocked"), object: nil)
+                           name: Self.lockedNotification, object: nil)
         center.addObserver(self, selector: #selector(handleUnlocked),
                            name: .init("com.apple.screenIsUnlocked"), object: nil)
 
@@ -64,6 +64,9 @@ final class LockMonitor: ObservableObject {
     /// 판단할 수 없으면 `false`(= 잠겨 있지 않음)를 돌려준다. 호출부가 이 값을
     /// "비밀번호를 주입해도 되는가" 판정에 쓰기 때문에, 불확실할 때는 주입하지 않는 쪽이 안전하다.
     /// 해제된 화면에 주입하면 비밀번호가 눈앞에 그대로 타이핑된다.
+    /// 잠금 알림 이름. 카메라를 쓰는 다른 화면도 이걸 보고 장치를 양보한다.
+    nonisolated static let lockedNotification = Notification.Name("com.apple.screenIsLocked")
+
     nonisolated static func screenIsLockedNow() -> Bool {
         guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any] else {
             Log.lock.error("CGSessionCopyCurrentDictionary 실패 — 잠기지 않은 것으로 간주")
