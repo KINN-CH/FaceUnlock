@@ -105,6 +105,9 @@ final class CameraSession: NSObject {
     /// 장치 재개방 시도 횟수.
     private var resetAttempts = 0
     private let maxResetAttempts = 3
+    /// 화면 절전으로 프레임이 멈췄다는 안내를 이미 남겼는가.
+    /// 0.5초마다 같은 줄을 찍으면 로그가 못 쓰게 된다.
+    private var reportedDisplaySleepStall = false
     /// 이 시간 넘게 프레임을 정상적으로 받았으면 복구 예산을 되돌린다.
     /// 프레임 한 장에 되돌리면, 켤 때마다 1초 만에 죽는 장치를 상대로
     /// 영원히 재개방을 반복하게 된다.
@@ -232,6 +235,7 @@ final class CameraSession: NSObject {
     /// 도착한 순간 검사가 끝나버리니 그 뒤의 죽음은 아무도 못 봤고,
     /// 한 번 검게 변하면 영영 돌아오지 않았다.
     private func startWatchdog() {
+        reportedDisplaySleepStall = false
         startGeneration &+= 1
         scheduleWatchdogTick(startGeneration)
     }
@@ -245,6 +249,18 @@ final class CameraSession: NSObject {
 
             if let idle = self.secondsSinceLastFrame {
                 if idle > self.stallTimeout {
+                    // 화면이 자면 카메라도 같이 잔다. 이건 고장이 아니라
+                    // 정상이므로 장치를 다시 열어봐야 소용없다 — 실제로
+                    // 잠금 버튼을 누를 때마다 재개방을 세 번 하고 실패했다.
+                    // 복구 예산은 진짜 먹통이 된 장치를 위해 남겨둔다.
+                    guard Self.anyDisplayAwake() else {
+                        if !self.reportedDisplaySleepStall {
+                            self.reportedDisplaySleepStall = true
+                            Log.camera.info("화면이 꺼져 프레임이 멈췄습니다 — 정상, 화면이 켜지면 재개됩니다")
+                        }
+                        self.scheduleWatchdogTick(generation)
+                        return
+                    }
                     Log.camera.error("프레임이 \(Int(idle * 1000))ms 째 끊겼습니다 (\(Self.environmentSummary(), privacy: .public)) — 장치를 다시 엽니다")
                     self.hardReset()
                     return
@@ -326,6 +342,18 @@ final class CameraSession: NSObject {
     /// 인식 테스트 창(화면 켜짐·잠금 해제)에서는 멀쩡한데 잠금화면에서만
     /// 0.7초 만에 끊긴다면, 카메라 자체가 아니라 잠금·절전 쪽에서 뭔가
     /// 장치를 가져가는 것이다. 그걸 구분하려고 남긴다.
+    /// 켜져 있는 디스플레이가 하나라도 있는가.
+    ///
+    /// 목록을 못 얻으면 "켜져 있다" 로 센다. 여기서 "꺼졌다" 로 넘어가면
+    /// 진짜 먹통이 된 장치를 복구하지 않고 넘어가게 된다.
+    private static func anyDisplayAwake() -> Bool {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return true }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return true }
+        return ids.prefix(Int(count)).contains { CGDisplayIsAsleep($0) == 0 }
+    }
+
     private static func environmentSummary() -> String {
         var displays = "디스플레이 알 수 없음"
         var count: UInt32 = 0

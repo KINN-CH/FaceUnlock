@@ -242,6 +242,16 @@ final class AppState: ObservableObject {
         // 새 잠금은 유예 시간을 새로 준다. 잠금 버튼으로 잠그면 화면이 바로
         // 꺼지는데, 직전 잠금에서 쓴 유예가 남아 있으면 안 된다.
         displaysSleptAt = nil
+
+        // 이미 화면이 꺼진 채로 잠긴 경우(덮개를 닫았거나, 절전으로 꺼진 뒤
+        // 잠금이 걸린 경우) 카메라를 켜봐야 프레임이 오지 않는다. 화면이
+        // 켜질 때 [handleScreensDidWake] 가 시작한다.
+        guard anyDisplayAwake() else {
+            Log.app.info("화면이 꺼진 채 잠김 — 화면이 켜지면 시작합니다")
+            startRetryLoop()
+            return
+        }
+
         startAttempt()
         startRetryLoop()
     }
