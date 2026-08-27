@@ -5,6 +5,21 @@ import QuartzCore
 enum FacePose: String, CaseIterable, Codable {
     case center, left, right, up, down, tiltLeft, tiltRight, closer, farther
 
+    /// 짧은 이름. 오토 촬영이 지금 무엇으로 인식했는지 알려줄 때 쓴다.
+    var label: String {
+        switch self {
+        case .center:    return T("정면", "Front")
+        case .left:      return T("왼쪽", "Left")
+        case .right:     return T("오른쪽", "Right")
+        case .up:        return T("위", "Up")
+        case .down:      return T("아래", "Down")
+        case .tiltLeft:  return T("왼쪽으로 기울임", "Tilt left")
+        case .tiltRight: return T("오른쪽으로 기울임", "Tilt right")
+        case .closer:    return T("가까이", "Closer")
+        case .farther:   return T("멀리", "Farther")
+        }
+    }
+
     var instruction: String {
         switch self {
         case .center:    return T("정면을 바라보세요", "Look straight at the camera")
