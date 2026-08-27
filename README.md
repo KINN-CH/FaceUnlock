@@ -112,7 +112,9 @@ macOS 14 이상 Apple Silicon, Command Line Tools(`xcode-select --install`),
 4. **로그인 비밀번호** — 저장하기 전에 실제 비밀번호가 맞는지 확인합니다
 5. **얼굴로 잠금 해제** 켜기
 
-`Ctrl`+`Cmd`+`Q`로 잠그고 카메라를 보면 몇 초 안에 열립니다.
+잘 되는지 보려면 `Ctrl`+`Cmd`+`Q`로 잠그고 **화면이 꺼질 때까지 기다렸다가**
+키를 눌러 깨워보세요. 몇 초 안에 열립니다. 잠근 직후에 얼굴을 들이대도 열리지
+않는 건 의도한 동작입니다 — [동작 방식](#동작-방식)을 보세요.
 언어는 설정에서 시스템 따름(기본) / 한국어 / English 중에 고를 수 있습니다.
 
 바꿀 수 있는 값은 셋입니다.
@@ -126,8 +128,8 @@ macOS 14 이상 Apple Silicon, Command Line Tools(`xcode-select --install`),
 ## 동작 방식
 
 ```
-화면 잠김 (com.apple.screenIsLocked)
-  → 카메라 시작 (잠긴 동안 + 화면이 켜져 있는 동안에만)
+잠긴 채로 화면이 켜짐 (screensDidWake · didWake)
+  → 인식 창 열림 — 카메라 시작 (창이 열려 있는 동안에만)
   → Vision 얼굴 검출 + 5점 랜드마크 (20fps)
   → 품질 게이트 (크기 · 가장자리 · 선명도)
   → 유사변환으로 112×112 정렬 + 노출 정규화 + CLAHE
@@ -149,10 +151,24 @@ macOS 14 이상 Apple Silicon, Command Line Tools(`xcode-select --install`),
 바꿔치는 걸 막기 위해서입니다. 같은 이유로 깜빡임이 감지된 직후에 임베딩을 한
 번 더 확인합니다. 눈을 감고 있는 사이에 얼굴이 바뀔 수 있으니까요.
 
-**화면이 꺼져 있으면 카메라도 끕니다.** 잠겨 있더라도 아무도 보고 있지 않은
-화면을 밤새 찍고 있을 이유가 없습니다. 화면이 다시 켜지는 순간 카메라가 켜지고
-인식이 시작됩니다. 검출과 깜빡임 감지는 20fps로 돌려 짧은 깜빡임을 놓치지 않고,
-무거운 임베딩만 초당 10회로 제한해 CPU를 아낍니다.
+**카메라는 잠금을 풀 만한 순간에만 켜집니다.** 이 앱이 일해야 하는 때는
+*잠긴 채로 화면이 켜지는 그 순간*뿐입니다. 그래서 "잠겨 있고 화면이 켜져
+**있는가**"라는 상태가 아니라 "화면이 켜**졌는가**"라는 사건으로 판단합니다.
+사건이 오면 인식 창을 열고, 성공·실패·제한 시간·화면 꺼짐 중 하나가 오면
+닫습니다. **창 밖에서는 카메라도 타이머도 돌지 않습니다.** 화면이 자면 카메라도
+같이 자서 프레임이 아예 오지 않으니, 그동안 아무것도 안 돌려도 잃는 게 없습니다.
+
+검출과 깜빡임 감지는 20fps로 돌려 짧은 깜빡임을 놓치지 않고, 무거운 임베딩만
+초당 10회로 제한합니다. 임베딩은 뉴럴 엔진이 아니라 CPU에서 돌립니다. 프레임당
+속도는 뉴럴 엔진이 4배 빠르지만 차이가 6.6ms라 체감되지 않는 반면, 모델을 처음
+올리는 시간은 1.67초 대 0.16초로 뒤집힙니다. 사건 기반이라 뉴럴 엔진은 거의
+항상 차갑기 때문에, 정작 기다리게 되는 쪽이 느려집니다.
+
+**직접 잠그면 곧바로 풀리지 않습니다.** 잠금 버튼을 눌렀다는 건 이유가 있어서
+잠갔다는 뜻입니다. 그런데 잠기자마자 인식을 시작하면, 깜빡임 확인을 끈 경우
+화면을 계속 보고 있는 것만으로 1초 뒤에 도로 풀립니다. 그래서 잠금 자체로는
+창을 열지 않습니다. macOS가 5초쯤 뒤 화면을 끄고, 다시 쓰려고 키를 누르거나
+트랙패드를 만지면 그때 창이 열립니다.
 
 **비밀번호가 거부되면 멈춥니다.** macOS 비밀번호를 바꾼 경우처럼 잠금 화면이
 저장된 비밀번호를 거부하면 자동 해제를 중단하고 재등록을 안내합니다. 틀린
@@ -344,9 +360,11 @@ Open **Settings** from the face icon in the menu bar and work down the list.
 4. **Login password** — verified against the real one before it's stored
 5. Turn on **Unlock with face**
 
-Lock with `Ctrl`+`Cmd`+`Q`, look at the camera, and it opens within a few
-seconds. Language follows the system by default; Korean and English can be
-picked in Settings.
+To try it, lock with `Ctrl`+`Cmd`+`Q`, **wait for the display to turn off**,
+then press a key to wake it — it opens within a few seconds. Showing your face
+right after locking deliberately does nothing; see [How it works](#how-it-works).
+Language follows the system by default; Korean and English can be picked in
+Settings.
 
 Three settings are adjustable.
 
@@ -359,8 +377,8 @@ Three settings are adjustable.
 ## How it works
 
 ```
-screen locks (com.apple.screenIsLocked)
-  → camera starts (only while locked and the display is awake)
+display wakes while locked (screensDidWake · didWake)
+  → recognition window opens — camera starts (only while the window is open)
   → Vision face detection + 5-point landmarks (20fps)
   → quality gate (size · edge margin · sharpness)
   → similarity transform to 112×112 + exposure normalization + CLAHE
@@ -384,11 +402,27 @@ someone being swapped in after a match. For the same reason the embedding is
 verified once more right after a blink is detected, since the face could change
 while the eyes are shut.
 
-**When the display sleeps, the camera stops.** There's no reason to film a
-screen nobody is looking at all night, locked or not. The camera comes back the
-instant the display wakes. Detection and blink tracking run at 20fps so short
-blinks aren't missed; only the expensive embedding is capped at 10 per second to
-keep the CPU quiet.
+**The camera only runs when an unlock is actually possible.** The one moment
+this app has work to do is *the display waking while the screen is locked*. So
+the trigger is the event — "did the display wake?" — not the state, "is a
+display awake?". The event opens a recognition window; success, failure, the
+timeout, or the display sleeping closes it. **Outside that window no camera and
+no timer runs at all.** Nothing is lost by sitting idle: when the display sleeps
+the camera sleeps with it and stops delivering frames anyway.
+
+Detection and blink tracking run at 20fps so short blinks aren't missed; only
+the expensive embedding is capped at 10 per second. That embedding runs on the
+CPU rather than the Neural Engine. Per frame the Neural Engine is 4× faster, but
+that's a 6.6ms difference nobody can feel — while loading the model cold is
+1.67s against 0.16s, and with an event-driven window the Neural Engine is almost
+always cold. The part you actually wait for is the part it loses.
+
+**Locking the screen yourself doesn't unlock it a second later.** Reaching for
+the lock button means you had a reason. But if recognition starts the instant it
+locks, then with the blink check turned off simply continuing to look at the
+screen reopens it about a second later. So the lock itself doesn't open a
+window. macOS turns the display off a few seconds later, and the window opens
+when you come back and press a key or touch the trackpad.
 
 **A rejected password stops everything.** If the lock screen refuses the stored
 password — after you change it in macOS, say — automatic unlocking is disabled
