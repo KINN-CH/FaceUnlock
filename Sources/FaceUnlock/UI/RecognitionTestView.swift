@@ -12,7 +12,7 @@ import SwiftUI
 @MainActor
 final class RecognitionTestController: ObservableObject {
 
-    @Published private(set) var headline = "카메라를 준비하는 중…"
+    @Published private(set) var headline = T("카메라를 준비하는 중…", "Preparing the camera…")
     @Published private(set) var detail = ""
     @Published private(set) var score: Float?
     @Published private(set) var isRunning = false
@@ -40,8 +40,9 @@ final class RecognitionTestController: ObservableObject {
                 MainActor.assumeIsolated {
                     guard let self, self.isRunning else { return }
                     self.stop()
-                    self.headline = "중단됨"
-                    self.detail = "화면이 잠겨 카메라를 실제 잠금 해제 쪽에 넘겼습니다."
+                    self.headline = T("중단됨", "Stopped")
+                    self.detail = T("화면이 잠겨 카메라를 실제 잠금 해제 쪽에 넘겼습니다.",
+                                    "The screen locked, so the camera was handed to the real unlock path.")
                 }
             }
     }
@@ -54,19 +55,19 @@ final class RecognitionTestController: ObservableObject {
     }
 
     func start() {
-        guard let profile = FaceStore.shared.snapshot(), !profile.samples.isEmpty else {
-            errorMessage = "먼저 얼굴을 등록해 주세요."
+        guard let roster = FaceStore.shared.snapshot(), !roster.isEmpty else {
+            errorMessage = T("먼저 얼굴을 등록해 주세요.", "Enroll a face first.")
             return
         }
         guard let model = AppState.shared.loadModelIfNeeded() else {
-            errorMessage = "얼굴 인식 모델을 불러오지 못했습니다."
+            errorMessage = T("얼굴 인식 모델을 불러오지 못했습니다.", "Could not load the recognition model.")
             return
         }
 
         errorMessage = nil
         succeeded = false
         score = nil
-        headline = "얼굴을 찾는 중…"
+        headline = T("얼굴을 찾는 중…", "Looking for a face…")
         detail = ""
 
         var config = AuthSession.Config()
@@ -74,7 +75,7 @@ final class RecognitionTestController: ObservableObject {
         config.requireBlink = Settings.shared.requireBlink
         config.timeout = Settings.shared.recognitionTimeout
 
-        let session = AuthSession(profile: profile, model: model, config: config)
+        let session = AuthSession(roster: roster, model: model, config: config)
         session.onProgress = { [weak self] progress in
             Task { @MainActor in self?.apply(progress) }
         }
@@ -118,43 +119,47 @@ final class RecognitionTestController: ObservableObject {
     private func apply(_ progress: AuthSession.Progress) {
         switch progress {
         case .searching:
-            headline = "얼굴을 찾는 중…"
+            headline = T("얼굴을 찾는 중…", "Looking for a face…")
             detail = ""
             score = nil
         case .faceDetected(let value):
-            headline = "얼굴은 보이지만 일치하지 않습니다"
+            headline = T("얼굴은 보이지만 일치하지 않습니다", "Face visible, but no match")
             score = value
             detail = value == nil
-                ? "이 프레임에서는 특징을 뽑지 못했습니다 (너무 작거나 흐릿함)"
-                : "임계값 \(String(format: "%.2f", threshold)) 미만"
+                ? T("이 프레임에서는 특징을 뽑지 못했습니다 (너무 작거나 흐릿함)",
+                    "Could not extract features from this frame (too small or blurry)")
+                : T("임계값 \(String(format: "%.2f", threshold)) 미만",
+                    "Below the \(String(format: "%.2f", threshold)) threshold")
         case .matching(let value):
-            headline = "일치 — 확인 중"
+            headline = T("일치 — 확인 중", "Match — confirming")
             score = value
-            detail = "연속 일치 프레임을 채우는 중입니다"
+            detail = T("연속 일치 프레임을 채우는 중입니다", "Filling consecutive matching frames")
         case .blinkChallenge:
-            headline = "눈을 한 번 깜빡여 주세요"
-            detail = "정지 사진을 걸러내는 단계입니다"
+            headline = T("눈을 한 번 깜빡여 주세요", "Blink once, please")
+            detail = T("정지 사진을 걸러내는 단계입니다", "This step filters out still photos")
         case .verifying:
-            headline = "깜빡임 후 재확인 중…"
-            detail = "눈 감긴 사이 얼굴이 바뀌지 않았는지 봅니다"
+            headline = T("깜빡임 후 재확인 중…", "Re-verifying after the blink…")
+            detail = T("눈 감긴 사이 얼굴이 바뀌지 않았는지 봅니다",
+                       "Checking the face did not change while eyes were closed")
         }
     }
 
     private func apply(_ outcome: AuthSession.Outcome) {
         endRound(releaseCamera: false)
         switch outcome {
-        case .authenticated:
+        case .authenticated(let person):
             succeeded = true
-            headline = "인식 성공"
-            detail = "실제 잠금 상태였다면 여기서 잠금이 풀립니다. 지금은 아무것도 하지 않습니다."
+            headline = T("인식 성공 — \(person)", "Recognized — \(person)")
+            detail = T("실제 잠금 상태였다면 여기서 잠금이 풀립니다. 지금은 아무것도 하지 않습니다.",
+                       "On a real lock screen this would unlock now. Here it does nothing.")
         case .timedOut:
-            headline = "시간 초과"
-            detail = "제한 시간 안에 일치하지 않았습니다."
+            headline = T("시간 초과", "Timed out")
+            detail = T("제한 시간 안에 일치하지 않았습니다.", "No match within the time limit.")
         case .cancelled:
-            headline = "중단됨"
+            headline = T("중단됨", "Stopped")
             detail = ""
         case .failed(let reason):
-            headline = "실패"
+            headline = T("실패", "Failed")
             detail = reason
         }
     }
@@ -162,13 +167,15 @@ final class RecognitionTestController: ObservableObject {
 
 struct RecognitionTestView: View {
     @StateObject private var controller = RecognitionTestController()
+    @ObservedObject private var l10n = L10n.shared
     let onClose: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("인식 테스트")
+            Text(T("인식 테스트", "Recognition Test"))
                 .font(.headline)
-            Text("잠금 해제는 하지 않습니다. 인식이 되는지만 확인합니다.")
+            Text(T("잠금 해제는 하지 않습니다. 인식이 되는지만 확인합니다.",
+                   "Does not unlock anything — only checks recognition."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -203,10 +210,10 @@ struct RecognitionTestView: View {
             }
 
             HStack {
-                Button(controller.isRunning ? "중지" : "다시 시도") {
+                Button(controller.isRunning ? T("중지", "Stop") : T("다시 시도", "Try Again")) {
                     if controller.isRunning { controller.stop() } else { controller.start() }
                 }
-                Button("닫기", action: onClose)
+                Button(T("닫기", "Close"), action: onClose)
                     .keyboardShortcut(.cancelAction)
             }
         }
@@ -227,12 +234,13 @@ struct RecognitionTestView: View {
     private var scoreBar: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("유사도")
+                Text(T("유사도", "Similarity"))
                     .font(.caption)
                 Spacer()
                 Text(controller.score.map { String(format: "%.3f", $0) } ?? "—")
                     .font(.system(.caption, design: .monospaced))
-                Text("/ 임계 \(String(format: "%.2f", controller.threshold))")
+                Text(T("/ 임계 \(String(format: "%.2f", controller.threshold))",
+                       "/ threshold \(String(format: "%.2f", controller.threshold))"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -266,6 +274,7 @@ final class RecognitionTestWindowController {
 
     func show() {
         if let window {
+            window.title = T("인식 테스트", "Recognition Test")
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             return
@@ -275,7 +284,7 @@ final class RecognitionTestWindowController {
             self?.close()
         })
         let win = NSWindow(contentViewController: hosting)
-        win.title = "인식 테스트"
+        win.title = T("인식 테스트", "Recognition Test")
         win.styleMask = [.titled, .closable]
         win.isReleasedWhenClosed = false
         win.center()

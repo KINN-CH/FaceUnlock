@@ -72,20 +72,27 @@ final class EnrollmentCapturer: @unchecked Sendable {
 
 /// 얼굴 등록 마법사의 상태.
 ///
-/// 포즈를 하나씩 안내하고, 품질 게이트를 통과한 프레임에서만 임베딩을 저장한다.
+/// 포즈를 하나씩 안내하고, 품질 게이트를 통과한 프레임에서만 임베딩을 모은다.
 /// 흐릿하거나 치우친 프레임을 등록해 두면 그 뒤로 계속 오인식이 난다.
+///
+/// 모은 샘플은 여기 들고만 있다가 [commit] 에서 한 번에 저장한다.
+/// 중간에 창을 닫으면 아무것도 남지 않는다 — 포즈마다 저장하던 예전 방식은
+/// 취소해도 반쪽짜리 등록이 남아 기존 등록까지 망가뜨렸다.
 @MainActor
 final class EnrollmentController: ObservableObject {
 
     @Published private(set) var completed: Set<FacePose> = []
     @Published private(set) var canCapture = false
-    @Published private(set) var guidance = "카메라를 준비하는 중…"
+    @Published private(set) var guidance = ""
     @Published private(set) var errorMessage: String?
     @Published private(set) var isFinished = false
     @Published private(set) var currentPose: FacePose = .center
+    /// 등록할 사람 이름. 비워두면 저장 시점에 "사용자 N" 이 붙는다.
+    @Published var personName = ""
 
     private let camera = CameraSession.shared
     private var capturer: EnrollmentCapturer?
+    private var samples: [FaceSample] = []
 
     var progress: Double { Double(completed.count) / Double(FacePose.allCases.count) }
 
@@ -94,13 +101,18 @@ final class EnrollmentController: ObservableObject {
     // MARK: 생명주기
 
     func start() {
+        guard FaceStore.shared.canAddPerson else {
+            errorMessage = FaceStoreError.rosterFull.localizedDescription
+            return
+        }
         guard let model = AppState.shared.loadModelIfNeeded() else {
-            errorMessage = "얼굴 인식 모델을 불러오지 못했습니다. tools/fetch_arcface.py 를 실행했는지 확인해 주세요."
+            errorMessage = T("얼굴 인식 모델을 불러오지 못했습니다. tools/fetch_arcface.py 를 실행했는지 확인해 주세요.",
+                             "Could not load the face recognition model. Make sure you ran tools/fetch_arcface.py.")
             return
         }
 
-        // 새로 등록할 때는 기존 등록을 비운다. 섞이면 어느 얼굴인지 알 수 없다.
-        FaceStore.shared.beginEnrollment()
+        samples = []
+        personName = ""
         completed = []
         isFinished = false
         errorMessage = nil
@@ -116,7 +128,8 @@ final class EnrollmentController: ObservableObject {
         }
         capturer.onCaptureFailed = { [weak self] in
             Task { @MainActor in
-                self?.errorMessage = "이 프레임에서 얼굴 특징을 뽑지 못했습니다. 다시 시도해 주세요."
+                self?.errorMessage = T("이 프레임에서 얼굴 특징을 뽑지 못했습니다. 다시 시도해 주세요.",
+                                       "Could not extract face features from this frame. Please try again.")
             }
         }
         self.capturer = capturer
@@ -137,6 +150,19 @@ final class EnrollmentController: ObservableObject {
         capturer?.requestCapture()
     }
 
+    /// 모은 9포즈를 한 사람으로 저장한다. 완료 버튼에서만 부른다.
+    func commit() {
+        guard isFinished else { return }
+        do {
+            try FaceStore.shared.addPerson(name: personName, samples: samples)
+            AppState.shared.refreshStatus()
+        } catch {
+            errorMessage = T("저장 실패: \(error.localizedDescription)",
+                             "Failed to save: \(error.localizedDescription)")
+            isFinished = false
+        }
+    }
+
     // MARK: 상태 갱신
 
     private func apply(_ readiness: EnrollmentCapturer.Readiness) {
@@ -146,27 +172,24 @@ final class EnrollmentController: ObservableObject {
             guidance = currentPose.instruction
         case .noFace:
             canCapture = false
-            guidance = "얼굴이 보이지 않습니다"
+            guidance = T("얼굴이 보이지 않습니다", "No face visible")
         case .poorQuality:
             canCapture = false
-            guidance = "얼굴이 너무 작거나 화면 가장자리에 있습니다"
+            guidance = T("얼굴이 너무 작거나 화면 가장자리에 있습니다",
+                         "Face is too small or too close to the edge")
         }
     }
 
     private func record(_ vector: [Float]) {
-        do {
-            try FaceStore.shared.record(vector, pose: currentPose)
-            completed.insert(currentPose)
-        } catch {
-            errorMessage = "저장 실패: \(error.localizedDescription)"
-            return
-        }
+        errorMessage = nil
+        samples.removeAll { $0.pose == currentPose }
+        samples.append(FaceSample(pose: currentPose, vector: vector))
+        completed.insert(currentPose)
 
         guard let next = FacePose.allCases.first(where: { !completed.contains($0) }) else {
             isFinished = true
-            guidance = "등록 완료"
+            guidance = T("촬영 완료 — ‘완료’를 누르면 저장됩니다", "All poses captured — press Done to save")
             stop()
-            AppState.shared.refreshStatus()
             return
         }
         currentPose = next

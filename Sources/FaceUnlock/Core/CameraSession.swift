@@ -201,7 +201,7 @@ final class CameraSession: NSObject {
 
     private func startOnQueue() {
         guard Permissions.hasCamera else {
-            onFailure?("카메라 권한이 없습니다.")
+            onFailure?(T("카메라 권한이 없습니다.", "Camera permission is missing."))
             return
         }
         if !isConfigured {
@@ -219,7 +219,7 @@ final class CameraSession: NSObject {
         // 프레임은 한 장도 안 오는 상태가 되고, 그게 곧 "카메라가 안 켜진다" 다.
         guard session.isRunning else {
             Log.camera.error("startRunning() 이후에도 세션이 돌지 않습니다")
-            onFailure?("카메라를 시작하지 못했습니다. 다른 앱이 사용 중일 수 있습니다.")
+            onFailure?(T("카메라를 시작하지 못했습니다. 다른 앱이 사용 중일 수 있습니다.", "Could not start the camera. Another app may be using it."))
             return
         }
         Log.camera.info("카메라 세션 시작")
@@ -284,7 +284,7 @@ final class CameraSession: NSObject {
             Log.camera.error("장치를 다시 열지 못했습니다 — 포기")
             let failure = onFailure
             stopOnQueue()
-            failure?("카메라가 응답하지 않습니다. 다른 앱이 카메라를 쓰고 있는지 확인해 주세요.")
+            failure?(T("카메라가 응답하지 않습니다. 다른 앱이 카메라를 쓰고 있는지 확인해 주세요.", "The camera is not responding. Check whether another app is using it."))
             return
         }
         isResetting = true
@@ -388,7 +388,7 @@ final class CameraSession: NSObject {
                 Log.camera.error("카메라 복구 실패 — 재시도 상한 도달")
                 let failure = self.onFailure
                 self.stopOnQueue()
-                failure?("카메라가 멈췄고 다시 시작하지 못했습니다.")
+                failure?(T("카메라가 멈췄고 다시 시작하지 못했습니다.", "The camera stalled and could not be restarted."))
                 return
             }
             self.restartAttempts += 1
@@ -416,14 +416,14 @@ final class CameraSession: NSObject {
         session.sessionPreset = .vga640x480
 
         guard let device = Self.preferredDevice() else {
-            onFailure?("사용 가능한 카메라를 찾지 못했습니다.")
+            onFailure?(T("사용 가능한 카메라를 찾지 못했습니다.", "No usable camera was found."))
             Log.camera.error("카메라 장치 없음")
             return false
         }
 
         guard let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input) else {
-            onFailure?("카메라를 열 수 없습니다.")
+            onFailure?(T("카메라를 열 수 없습니다.", "Could not open the camera."))
             Log.camera.error("AVCaptureDeviceInput 생성 실패")
             return false
         }
@@ -437,7 +437,7 @@ final class CameraSession: NSObject {
         output.setSampleBufferDelegate(self, queue: queue)
 
         guard session.canAddOutput(output) else {
-            onFailure?("카메라 출력을 구성할 수 없습니다.")
+            onFailure?(T("카메라 출력을 구성할 수 없습니다.", "Could not configure the camera output."))
             return false
         }
         session.addOutput(output)

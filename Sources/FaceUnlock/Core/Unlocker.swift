@@ -24,11 +24,11 @@ enum Unlocker {
 
         var errorDescription: String? {
             switch self {
-            case .notLocked:            return "화면이 잠겨 있지 않습니다."
-            case .noAccessibility:      return "손쉬운 사용 권한이 필요합니다."
-            case .noPassword:           return "저장된 비밀번호가 없습니다."
-            case .eventCreationFailed:  return "키 이벤트를 만들지 못했습니다."
-            case .stillLocked:          return "잠금 해제에 실패했습니다."
+            case .notLocked:            return T("화면이 잠겨 있지 않습니다.", "The screen is not locked.")
+            case .noAccessibility:      return T("손쉬운 사용 권한이 필요합니다.", "Accessibility permission is required.")
+            case .noPassword:           return T("저장된 비밀번호가 없습니다.", "No password is stored.")
+            case .eventCreationFailed:  return T("키 이벤트를 만들지 못했습니다.", "Could not create key events.")
+            case .stillLocked:          return T("잠금 해제에 실패했습니다.", "Unlocking failed.")
             }
         }
     }

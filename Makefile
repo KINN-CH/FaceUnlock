@@ -63,6 +63,7 @@ endif
 #   make aligntest && ./build/aligntest photo1.jpg photo2.jpg
 ALIGNTEST_SRCS := Tools/AlignTest/main.swift Tools/AlignTest/SelfTest.swift \
     Sources/FaceUnlock/Core/Log.swift \
+    Sources/FaceUnlock/Core/L10n.swift \
     Sources/FaceUnlock/Core/VectorMath.swift \
     Sources/FaceUnlock/Core/FaceGeometry.swift \
     Sources/FaceUnlock/Core/FaceDetector.swift \

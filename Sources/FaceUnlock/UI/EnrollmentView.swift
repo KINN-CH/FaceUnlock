@@ -3,6 +3,7 @@ import SwiftUI
 
 struct EnrollmentView: View {
     @StateObject private var controller = EnrollmentController()
+    @ObservedObject private var l10n = L10n.shared
     var onClose: () -> Void
 
     var body: some View {
@@ -45,11 +46,15 @@ struct EnrollmentView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 4) {
-            Text("얼굴 등록").font(.title2).bold()
-            Text("안내하는 자세를 취한 뒤 ‘촬영’을 누르세요. 총 \(FacePose.allCases.count)장을 등록합니다.")
+        VStack(spacing: 8) {
+            Text(T("얼굴 등록", "Enroll a Face")).font(.title2).bold()
+            Text(T("안내하는 자세를 취한 뒤 ‘촬영’을 누르세요. 총 \(FacePose.allCases.count)장을 등록합니다.",
+                   "Follow the pose guidance, then press Capture. \(FacePose.allCases.count) shots in total."))
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            TextField(T("이름 (비워두면 자동)", "Name (optional)"), text: $controller.personName)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 240)
         }
     }
 
@@ -72,18 +77,19 @@ struct EnrollmentView: View {
 
     private var footer: some View {
         HStack {
-            Button("취소") {
+            Button(T("취소", "Cancel")) {
                 controller.stop()
                 onClose()
             }
             Spacer()
             if controller.isFinished {
-                Button("완료") {
+                Button(T("완료", "Done")) {
+                    controller.commit()
                     onClose()
                 }
                 .keyboardShortcut(.defaultAction)
             } else {
-                Button("촬영") { controller.requestCapture() }
+                Button(T("촬영", "Capture")) { controller.requestCapture() }
                     .keyboardShortcut(.space, modifiers: [])
                     .disabled(!controller.canCapture)
             }
@@ -100,6 +106,7 @@ final class EnrollmentWindowController {
 
     func show() {
         if let window {
+            window.title = T("얼굴 등록", "Enroll a Face")
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             return
@@ -109,7 +116,7 @@ final class EnrollmentWindowController {
             self?.close()
         })
         let win = NSWindow(contentViewController: hosting)
-        win.title = "얼굴 등록"
+        win.title = T("얼굴 등록", "Enroll a Face")
         win.styleMask = [.titled, .closable]
         win.isReleasedWhenClosed = false
         win.center()

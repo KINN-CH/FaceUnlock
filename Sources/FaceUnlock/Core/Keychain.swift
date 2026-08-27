@@ -158,7 +158,7 @@ enum Keychain {
             switch self {
             case .os(let s):
                 let message = SecCopyErrorMessageString(s, nil) as String? ?? "알 수 없는 오류"
-                return "Keychain 오류 \(s): \(message)"
+                return T("Keychain 오류 \(s): \(message)", "Keychain error \(s): \(message)")
             }
         }
     }

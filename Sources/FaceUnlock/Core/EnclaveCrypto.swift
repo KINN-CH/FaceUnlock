@@ -20,9 +20,9 @@ enum EnclaveCrypto {
 
         var errorDescription: String? {
             switch self {
-            case .noKey:            return "암호화 키를 만들 수 없습니다."
-            case .sealFailed(let m): return "암호화 실패: \(m)"
-            case .openFailed(let m): return "복호화 실패: \(m)"
+            case .noKey:            return T("암호화 키를 만들 수 없습니다.", "Could not create the encryption key.")
+            case .sealFailed(let m): return T("암호화 실패: \(m)", "Encryption failed: \(m)")
+            case .openFailed(let m): return T("복호화 실패: \(m)", "Decryption failed: \(m)")
             }
         }
     }

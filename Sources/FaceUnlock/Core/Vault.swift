@@ -22,11 +22,11 @@ enum Vault {
         var errorDescription: String? {
             switch self {
             case .wrongPassword:
-                return "로그인 비밀번호가 올바르지 않습니다."
+                return T("로그인 비밀번호가 올바르지 않습니다.", "That is not the correct login password.")
             case .notStored:
-                return "저장된 비밀번호가 없습니다. 설정에서 다시 등록해 주세요."
+                return T("저장된 비밀번호가 없습니다. 설정에서 다시 등록해 주세요.", "No password is stored. Register it again in Settings.")
             case .directoryUnavailable(let m):
-                return "비밀번호를 확인할 수 없습니다: \(m)"
+                return T("비밀번호를 확인할 수 없습니다: \(m)", "Could not verify the password: \(m)")
             }
         }
     }

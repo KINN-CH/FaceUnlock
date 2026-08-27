@@ -8,15 +8,38 @@ final class AppState: ObservableObject {
 
     static let shared = AppState()
 
+    /// 아직 채워지지 않은 선행 조건. 문자열 비교로 분기하지 않도록 형으로 둔다.
+    enum SetupBlocker: Equatable {
+        case cameraPermission
+        case accessibilityPermission
+        case model
+        case loadingFaces
+        case enrollment
+        case password
+        case passwordReenroll
+
+        var label: String {
+            switch self {
+            case .cameraPermission:        return T("카메라 권한", "camera permission")
+            case .accessibilityPermission: return T("손쉬운 사용 권한", "accessibility permission")
+            case .model:                   return T("얼굴 인식 모델", "recognition model")
+            case .loadingFaces:            return T("얼굴 정보 불러오는 중", "loading enrolled faces")
+            case .enrollment:              return T("얼굴 등록", "face enrollment")
+            case .password:                return T("비밀번호 등록", "password setup")
+            case .passwordReenroll:        return T("비밀번호 재등록", "password re-entry")
+            }
+        }
+    }
+
     enum Status: Equatable {
-        case disabled           // 설정에서 꺼둠
-        case needsSetup(String) // 권한/등록/모델 미비 — 사유 문자열
-        case idle               // 준비 완료, 화면 잠기기를 기다리는 중
-        case watching           // 잠김. 얼굴 찾는 중
-        case matching           // 얼굴 일치 진행 중
-        case blinkChallenge     // 얼굴 일치. 깜빡임 대기
-        case unlocking          // 비밀번호 주입 중
-        case failed(String)     // 이번 잠금 세션은 포기. 비밀번호로 로그인해야 함
+        case disabled                 // 설정에서 꺼둠
+        case needsSetup(SetupBlocker) // 권한/등록/모델 미비
+        case idle                     // 준비 완료, 화면 잠기기를 기다리는 중
+        case watching                 // 잠김. 얼굴 찾는 중
+        case matching                 // 얼굴 일치 진행 중
+        case blinkChallenge           // 얼굴 일치. 깜빡임 대기
+        case unlocking                // 비밀번호 주입 중
+        case failed(String)           // 이번 잠금 세션은 포기. 비밀번호로 로그인해야 함
 
         var menuBarSymbol: String {
             switch self {
@@ -33,14 +56,14 @@ final class AppState: ObservableObject {
 
         var label: String {
             switch self {
-            case .disabled:            return "꺼짐"
-            case .needsSetup(let why): return "설정 필요 — \(why)"
-            case .idle:                return "대기 중"
-            case .watching:            return "얼굴 찾는 중…"
-            case .matching:            return "얼굴 확인 중…"
-            case .blinkChallenge:      return "눈을 깜빡이세요"
-            case .unlocking:           return "잠금 해제 중…"
-            case .failed(let why):     return "실패 — \(why)"
+            case .disabled:            return T("꺼짐", "Off")
+            case .needsSetup(let why): return T("설정 필요 — \(why.label)", "Setup needed — \(why.label)")
+            case .idle:                return T("대기 중", "Standing by")
+            case .watching:            return T("얼굴 찾는 중…", "Looking for a face…")
+            case .matching:            return T("얼굴 확인 중…", "Verifying face…")
+            case .blinkChallenge:      return T("눈을 깜빡이세요", "Blink now")
+            case .unlocking:           return T("잠금 해제 중…", "Unlocking…")
+            case .failed(let why):     return T("실패 — \(why)", "Failed — \(why)")
             }
         }
     }
@@ -399,16 +422,16 @@ final class AppState: ObservableObject {
             return
         }
         if let blocker = setupBlocker() {
-            Log.app.error("화면 잠김 — 준비 안 됨: \(blocker, privacy: .public)")
+            Log.app.error("화면 잠김 — 준비 안 됨: \(blocker.label, privacy: .public)")
             refreshStatus()
             return
         }
-        guard let profile = store.snapshot(), !profile.samples.isEmpty else {
+        guard let roster = store.snapshot(), !roster.isEmpty else {
             Log.app.error("화면 잠김 — 등록된 얼굴을 읽지 못했습니다")
             return
         }
         guard let model = loadModelIfNeeded() else {
-            status = .needsSetup("얼굴 인식 모델")
+            status = .needsSetup(.model)
             return
         }
 
@@ -417,7 +440,7 @@ final class AppState: ObservableObject {
         config.requireBlink = settings.requireBlink
         config.timeout = settings.recognitionTimeout
 
-        let session = AuthSession(profile: profile, model: model, config: config)
+        let session = AuthSession(roster: roster, model: model, config: config)
         session.onProgress = { [weak self] progress in self?.apply(progress) }
         session.onOutcome = { [weak self] outcome in self?.apply(outcome) }
         session.begin()
@@ -485,10 +508,11 @@ final class AppState: ObservableObject {
 
     private func apply(_ outcome: AuthSession.Outcome) {
         switch outcome {
-        case .authenticated:
+        case .authenticated(let person):
+            Log.app.info("인증 성공: \(person, privacy: .public)")
             performUnlock()
         case .timedOut:
-            abort("시간 초과 — 비밀번호로 로그인하세요")
+            abort(T("시간 초과 — 비밀번호로 로그인하세요", "Timed out — log in with your password"))
         case .cancelled:
             refreshStatus()
         case .failed(let reason):
@@ -532,7 +556,7 @@ final class AppState: ObservableObject {
                         self.stopRetryLoop()
                         self.endSession()
                         Log.app.error("저장된 비밀번호가 연속 거부됨 — 자동 해제를 중단합니다")
-                        self.status = .needsSetup("비밀번호 재등록")
+                        self.status = .needsSetup(.passwordReenroll)
                     } else {
                         self.status = .failed(Unlocker.Failure.stillLocked.localizedDescription)
                     }
@@ -562,15 +586,15 @@ final class AppState: ObservableObject {
     }
 
     /// 아직 채워지지 않은 선행 조건 중 첫 번째. 없으면 nil.
-    func setupBlocker() -> String? {
-        if !hasCamera        { return "카메라 권한" }
-        if !hasAccessibility { return "손쉬운 사용 권한" }
-        if !modelAvailable               { return "얼굴 인식 모델" }
-        if !store.isLoaded               { return "얼굴 정보 불러오는 중" }
-        if !store.isEnrolled             { return "얼굴 등록" }
-        if !Vault.hasPassword            { return "비밀번호 등록" }
-        if vaultUnreadable               { return "비밀번호 재등록" }
-        if passwordRejected              { return "비밀번호 재등록" }
+    func setupBlocker() -> SetupBlocker? {
+        if !hasCamera        { return .cameraPermission }
+        if !hasAccessibility { return .accessibilityPermission }
+        if !modelAvailable               { return .model }
+        if !store.isLoaded               { return .loadingFaces }
+        if !store.isEnrolled             { return .enrollment }
+        if !Vault.hasPassword            { return .password }
+        if vaultUnreadable               { return .passwordReenroll }
+        if passwordRejected              { return .passwordReenroll }
         return nil
     }
 }

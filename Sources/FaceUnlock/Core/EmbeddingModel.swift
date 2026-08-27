@@ -16,9 +16,9 @@ final class EmbeddingModel {
         var errorDescription: String? {
             switch self {
             case .modelMissing:
-                return "ArcFace 모델이 없습니다. tools/fetch_arcface.py 를 실행해 주세요."
-            case .compileFailed(let m): return "모델 컴파일 실패: \(m)"
-            case .badOutput(let m):     return "모델 출력이 예상과 다릅니다: \(m)"
+                return T("ArcFace 모델이 없습니다. tools/fetch_arcface.py 를 실행해 주세요.", "The ArcFace model is missing. Run tools/fetch_arcface.py.")
+            case .compileFailed(let m): return T("모델 컴파일 실패: \(m)", "Model compilation failed: \(m)")
+            case .badOutput(let m):     return T("모델 출력이 예상과 다릅니다: \(m)", "Unexpected model output: \(m)")
             }
         }
     }

@@ -23,7 +23,8 @@ final class AuthSession {
     }
 
     enum Outcome {
-        case authenticated
+        /// 인증 성공. 어느 등록자와 일치했는지 이름을 싣는다.
+        case authenticated(person: String)
         case timedOut
         case cancelled
         case failed(String)
@@ -60,7 +61,7 @@ final class AuthSession {
         case finished
     }
 
-    private let profile: FaceProfile
+    private let roster: FaceRoster
     private let model: EmbeddingModel
     private let config: Config
 
@@ -73,8 +74,8 @@ final class AuthSession {
     private var deadline: CFTimeInterval = 0
     private var lastProgress: String = ""
 
-    init(profile: FaceProfile, model: EmbeddingModel, config: Config) {
-        self.profile = profile
+    init(roster: FaceRoster, model: EmbeddingModel, config: Config) {
+        self.roster = roster
         self.model = model
         self.config = config
     }
@@ -127,7 +128,7 @@ final class AuthSession {
         case .awaitingBlink(let blinkDeadline):
             if now > blinkDeadline {
                 Log.face.info("깜빡임 대기 시간 초과")
-                finish(.failed("깜빡임이 감지되지 않았습니다"))
+                finish(.failed(T("깜빡임이 감지되지 않았습니다", "No blink was detected")))
                 return
             }
             report(.blinkChallenge)
@@ -141,8 +142,8 @@ final class AuthSession {
 
             if let result = embedAndMatch(face: face, in: pixelBuffer),
                result.passes(threshold: config.threshold) {
-                Log.face.info("깜빡임 후 재확인 통과 (\(result.score, format: .fixed(precision: 3)))")
-                finish(.authenticated)
+                Log.face.info("깜빡임 후 재확인 통과 (\(result.personName, privacy: .public), \(result.score, format: .fixed(precision: 3)))")
+                finish(.authenticated(person: result.personName))
                 return
             }
 
@@ -186,15 +187,15 @@ final class AuthSession {
             deadline = max(deadline, now + config.blinkTimeout + config.reverifyWindow)
             report(.blinkChallenge)
         } else {
-            Log.face.info("얼굴 일치 (깜빡임 확인 없음)")
-            finish(.authenticated)
+            Log.face.info("얼굴 일치 (깜빡임 확인 없음): \(result.personName, privacy: .public)")
+            finish(.authenticated(person: result.personName))
         }
     }
 
     private func embedAndMatch(face: VNFaceObservation, in pixelBuffer: CVPixelBuffer) -> MatchResult? {
         guard let pixels = aligner.alignedPixels(from: pixelBuffer, observation: face),
               let vector = model.embed(alignedRGBA: pixels) else { return nil }
-        return profile.match(vector)
+        return roster.match(vector)
     }
 
     // MARK: 콜백

@@ -10,6 +10,7 @@ final class SettingsWindowController {
 
     func show() {
         if let window {
+            window.title = T("FaceUnlock 설정", "FaceUnlock Settings")
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             return
@@ -19,7 +20,7 @@ final class SettingsWindowController {
             rootView: SettingsView().environmentObject(AppState.shared)
         )
         let win = NSWindow(contentViewController: hosting)
-        win.title = "FaceUnlock 설정"
+        win.title = T("FaceUnlock 설정", "FaceUnlock Settings")
         win.styleMask = [.titled, .closable, .miniaturizable]
         win.isReleasedWhenClosed = false
         win.setContentSize(NSSize(width: 460, height: 520))
