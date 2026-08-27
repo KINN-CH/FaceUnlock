@@ -183,10 +183,10 @@ struct SettingsView: View {
             }
 
             if !state.modelAvailable {
-                Text(T("얼굴 인식 모델이 없습니다. 저장소의 tools/fetch_arcface.py 를 실행해 "
-                       + "Resources/Models/ArcFace.mlpackage 를 만든 뒤 다시 빌드해 주세요.",
-                       "The recognition model is missing. Run tools/fetch_arcface.py to create "
-                       + "Resources/Models/ArcFace.mlpackage, then rebuild."))
+                Text(T("얼굴 인식 모델이 없습니다. DMG 의 '설치 도우미.command' 를 실행하거나, "
+                       + "저장소에서 make model 후 다시 빌드해 주세요.",
+                       "The recognition model is missing. Run '설치 도우미.command' from the DMG, "
+                       + "or run `make model` in the repository and rebuild."))
                     .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }

@@ -253,8 +253,8 @@ final class AppState: ObservableObject {
     }
 
     var modelAvailable: Bool {
-        model != nil || Bundle.main.url(forResource: "ArcFace", withExtension: "mlpackage",
-                                        subdirectory: "Models") != nil
+        // 로드와 같은 탐색 규칙을 쓴다 — 번들 외에 DMG 사이드로드 경로도 포함.
+        model != nil || EmbeddingModel.locateModel() != nil
     }
 
     // MARK: 잠금 전이

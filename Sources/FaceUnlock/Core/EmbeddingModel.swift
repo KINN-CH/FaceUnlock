@@ -63,34 +63,43 @@ final class EmbeddingModel {
         Log.face.info("ArcFace 로드됨 (입력 \(input, privacy: .public) → 출력 \(output, privacy: .public))")
     }
 
-    /// 번들의 .mlpackage 를 캐시 디렉터리에 컴파일해 두고 재사용한다.
-    /// 컴파일은 수 초 걸리므로 매 실행마다 하지 않는다.
-    private static func compiledModelURL() throws -> URL {
+    /// 모델 탐색 — 실제 로드와 UI 표시(`AppState.modelAvailable`)가 반드시 같은
+    /// 규칙을 쓰도록 한 곳에 둔다. 서로 다른 규칙을 쓰면 "모델은 로드되는데
+    /// 설정창은 없다고 표시"하는 식으로 어긋난다.
+    ///
+    /// 탐색 순서: 환경변수(테스트) → 앱 번들(소스 빌드) → Application Support(DMG 배포).
+    /// InsightFace 가중치는 비상업 연구용 라이선스라 DMG 에 동봉하지 않는다.
+    /// DMG 사용자는 '설치 도우미'가 변환한 .mlpackage 를
+    /// ~/Library/Application Support/FaceUnlock/Models/ 에 넣는다.
+    static func locateModel() -> URL? {
         // CLI 테스트 하네스는 앱 번들이 없으므로 경로를 환경변수로 넘긴다.
         let override = ProcessInfo.processInfo.environment["FACEUNLOCK_MODEL"].map {
             URL(fileURLWithPath: $0)
         }
-        // 탐색 순서: 환경변수(테스트) → 앱 번들(소스 빌드) → Application Support(DMG 배포).
-        // InsightFace 가중치는 비상업 연구용 라이선스라 DMG 에 동봉하지 않는다.
-        // DMG 사용자는 저장소에서 `make model` 로 변환한 .mlpackage 를
-        // ~/Library/Application Support/FaceUnlock/Models/ 에 넣어 쓴다.
-        let supportDir = try FileManager.default.url(for: .applicationSupportDirectory,
-                                                     in: .userDomainMask,
-                                                     appropriateFor: nil, create: true)
-            .appendingPathComponent("FaceUnlock", isDirectory: true)
-        let sideloaded = supportDir.appendingPathComponent("Models/ArcFace.mlpackage",
-                                                           isDirectory: true)
+        let sideloaded = supportDirectory?
+            .appendingPathComponent("Models/ArcFace.mlpackage", isDirectory: true)
+        return override
+            ?? Bundle.main.url(forResource: "ArcFace", withExtension: "mlpackage",
+                               subdirectory: "Models")
+            ?? Bundle.main.url(forResource: "ArcFace", withExtension: "mlpackage")
+            ?? sideloaded.flatMap {
+                FileManager.default.fileExists(atPath: $0.path) ? $0 : nil
+            }
+    }
 
-        guard let packaged = override ?? Bundle.main.url(forResource: "ArcFace",
-                                             withExtension: "mlpackage",
-                                             subdirectory: "Models")
-                ?? Bundle.main.url(forResource: "ArcFace", withExtension: "mlpackage")
-                ?? (FileManager.default.fileExists(atPath: sideloaded.path) ? sideloaded : nil)
-        else {
+    private static var supportDirectory: URL? {
+        try? FileManager.default.url(for: .applicationSupportDirectory,
+                                     in: .userDomainMask,
+                                     appropriateFor: nil, create: true)
+            .appendingPathComponent("FaceUnlock", isDirectory: true)
+    }
+
+    /// 번들의 .mlpackage 를 캐시 디렉터리에 컴파일해 두고 재사용한다.
+    /// 컴파일은 수 초 걸리므로 매 실행마다 하지 않는다.
+    private static func compiledModelURL() throws -> URL {
+        guard let packaged = locateModel(), let cacheDir = supportDirectory else {
             throw LoadError.modelMissing
         }
-
-        let cacheDir = supportDir
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         let cached = cacheDir.appendingPathComponent("ArcFace.mlmodelc", isDirectory: true)
 
