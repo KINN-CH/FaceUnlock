@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import CoreVideo
 import Foundation
 
@@ -46,8 +47,17 @@ final class CameraSession: NSObject {
     private let output = AVCaptureVideoDataOutput()
     private let queue = DispatchQueue(label: "io.github.kinnch.FaceUnlock.camera")
 
-    /// 얼굴 인식에 초당 30장은 필요 없다. 전력을 아끼려고 대략 10fps 로 솎는다.
-    private let minimumFrameInterval: CFTimeInterval = 1.0 / 10.0
+    /// 프레임 솎는 간격 — 대략 20fps.
+    ///
+    /// 예전에는 10fps 였다. 전력을 아끼려는 값이었는데 **깜빡임을 놓친다.**
+    /// 실측한 눈 감김 길이는 105·124·126·132·234·248ms 였다. 100ms 짜리
+    /// 깜빡임은 10fps(100ms 간격)에서 눈 감긴 프레임이 한 장도 안 잡힐 수
+    /// 있고, 그러면 사용자는 분명히 깜빡였는데 아무 일도 안 일어난다.
+    /// 20fps면 가장 짧은 깜빡임도 2장쯤 잡힌다.
+    ///
+    /// 늦게 도착한 프레임은 버려지므로([alwaysDiscardsLateVideoFrames])
+    /// 처리가 밀려도 큐에 쌓이지 않는다 — 느려질 뿐 고장나지 않는다.
+    private let minimumFrameInterval: CFTimeInterval = 1.0 / 20.0
     private var lastFrameTime: CFTimeInterval = 0
 
     /// 마지막으로 실제 프레임이 들어온 시각. 카메라 큐에서 쓰고 메인에서 읽으므로
@@ -235,12 +245,12 @@ final class CameraSession: NSObject {
 
             if let idle = self.secondsSinceLastFrame {
                 if idle > self.stallTimeout {
-                    Log.camera.error("프레임이 \(Int(idle * 1000))ms 째 끊겼습니다 — 장치를 다시 엽니다")
+                    Log.camera.error("프레임이 \(Int(idle * 1000))ms 째 끊겼습니다 (\(Self.environmentSummary(), privacy: .public)) — 장치를 다시 엽니다")
                     self.hardReset()
                     return
                 }
             } else if CACurrentMediaTime() - self.startedAt > self.firstFrameTimeout {
-                Log.camera.error("시작 후 첫 프레임이 오지 않습니다 — 장치를 다시 엽니다")
+                Log.camera.error("시작 후 첫 프레임이 오지 않습니다 (\(Self.environmentSummary(), privacy: .public)) — 장치를 다시 엽니다")
                 self.hardReset()
                 return
             }
@@ -294,6 +304,10 @@ final class CameraSession: NSObject {
                            name: .AVCaptureSessionRuntimeError, object: session)
         center.addObserver(self, selector: #selector(sessionDidStopRunning(_:)),
                            name: .AVCaptureSessionDidStopRunning, object: session)
+        center.addObserver(self, selector: #selector(sessionWasInterrupted(_:)),
+                           name: AVCaptureSession.wasInterruptedNotification, object: session)
+        center.addObserver(self, selector: #selector(sessionInterruptionEnded(_:)),
+                           name: AVCaptureSession.interruptionEndedNotification, object: session)
     }
 
     @objc private func sessionRuntimeError(_ note: Notification) {
@@ -305,6 +319,36 @@ final class CameraSession: NSObject {
 
     @objc private func sessionDidStopRunning(_ note: Notification) {
         scheduleRestart()
+    }
+
+    /// 프레임이 끊긴 **순간의 주변 상황**. 원인을 좁히는 데 쓴다.
+    ///
+    /// 인식 테스트 창(화면 켜짐·잠금 해제)에서는 멀쩡한데 잠금화면에서만
+    /// 0.7초 만에 끊긴다면, 카메라 자체가 아니라 잠금·절전 쪽에서 뭔가
+    /// 장치를 가져가는 것이다. 그걸 구분하려고 남긴다.
+    private static func environmentSummary() -> String {
+        var displays = "디스플레이 알 수 없음"
+        var count: UInt32 = 0
+        if CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 {
+            var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            if CGGetActiveDisplayList(count, &ids, &count) == .success {
+                let awake = ids.prefix(Int(count)).filter { CGDisplayIsAsleep($0) == 0 }.count
+                displays = "디스플레이 \(awake)/\(count) 켜짐"
+            }
+        }
+        let locked = LockMonitor.screenIsLockedNow() ? "잠김" : "해제됨"
+        return "\(displays), 화면 \(locked)"
+    }
+
+    @objc private func sessionWasInterrupted(_ note: Notification) {
+        // 이유 키(AVCaptureSessionInterruptionReasonKey)는 iOS 전용이라 여기서는
+        // 못 쓴다. 그래도 "중단됐다" 는 사실만으로 우리 코드 문제인지
+        // 시스템이 장치를 가져간 것인지 갈린다.
+        Log.camera.error("카메라 세션 중단됨 (\(Self.environmentSummary(), privacy: .public))")
+    }
+
+    @objc private func sessionInterruptionEnded(_ note: Notification) {
+        Log.camera.info("카메라 세션 중단 해제됨")
     }
 
     private func scheduleRestart() {

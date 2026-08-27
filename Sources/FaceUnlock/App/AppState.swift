@@ -84,11 +84,24 @@ final class AppState: ObservableObject {
     /// 한 번 시간이 초과되면, 그 잠금이 풀릴 때까지 **다시는 시도하지 않았다.**
     /// 사용자 입장에서는 "아무리 깜빡여도 안 열린다" 로 보인다.
     private var retryTimer: Timer?
+    /// 화면이 켜지는 순간을 알려주는 옵저버.
+    private var wakeObserver: NSObjectProtocol?
     /// 모든 디스플레이가 꺼진 시점. 켜져 있으면 nil.
     private var displaysSleptAt: CFTimeInterval?
     /// 화면이 다 꺼진 뒤에도 계속 시도할 시간.
-    /// 잠금 버튼을 누르고 얼굴을 들이미는 데 걸리는 시간을 넉넉히 덮는다.
-    private let graceAfterDisplaySleep: CFTimeInterval = 120
+    ///
+    /// 예전에는 120초였다. 잠금 버튼을 누르고 얼굴을 들이미는 시간을 넉넉히
+    /// 덮으려는 의도였는데, 두 가지 이유로 잘못된 값이다.
+    ///
+    /// 1. **화면이 자는 동안에는 카메라가 어차피 프레임을 안 준다.** 잠긴 직후
+    ///    0.7초만 프레임이 오고 끊기는 게 로그에 그대로 남았다. 장치를 다시
+    ///    열어도 똑같다. 그 시간 동안 카메라를 켜둬봐야 배터리와 표시등만 쓴다.
+    /// 2. 밤새 자리를 비운 경우와 구분되지 않는다.
+    ///
+    /// 그래서 짧게만 준다 — 잠김/절전 전환 중에 상태가 한두 번 튀는 걸
+    /// 견디는 정도다. 화면이 다시 켜지면 [handleScreensDidWake] 가 즉시
+    /// 카메라를 되살린다.
+    private let graceAfterDisplaySleep: CFTimeInterval = 5
     /// 이번 시도를 시작한 시각. 카메라 감시용.
     private var attemptStartedAt: CFTimeInterval?
     /// 이 시간 동안 프레임이 한 장도 안 오면 카메라가 죽은 것으로 본다.
@@ -114,6 +127,16 @@ final class AppState: ObservableObject {
         lockMonitor.onLock = { [weak self] in self?.handleScreenLocked() }
         lockMonitor.onUnlock = { [weak self] in self?.handleScreenUnlocked() }
         lockMonitor.start()
+
+        // 화면이 켜지는 순간을 잡는다.
+        //
+        // 재시도 타이머만으로도 결국 다시 켜지지만 최대 2초가 밀린다.
+        // 사용자가 키를 눌러 화면을 깨우고 카메라를 쳐다보는 그 2초는
+        // "왜 안 켜지지" 로 느껴진다.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleScreensDidWake() }
+            }
 
         settings.$faceUnlockEnabled
             .receive(on: RunLoop.main)
@@ -223,6 +246,20 @@ final class AppState: ObservableObject {
         startRetryLoop()
     }
 
+    /// 화면이 켜졌다. 잠겨 있다면 곧바로 카메라를 되살린다.
+    ///
+    /// 화면이 자는 동안에는 카메라를 꺼두므로(배터리·표시등), 깨어난 이 시점이
+    /// 얼굴 인식을 시작할 시점이다.
+    private func handleScreensDidWake() {
+        displaysSleptAt = nil
+        guard settings.faceUnlockEnabled, session == nil else { return }
+        guard lockMonitor.isLocked || LockMonitor.screenIsLockedNow() else { return }
+        guard setupBlocker() == nil else { return }
+        Log.app.info("화면이 켜짐 — 인증 세션을 시작합니다")
+        startAttempt()
+        startRetryLoop()
+    }
+
     // MARK: 재시도 루프
 
     /// 잠겨 있는 한 계속 다시 시도한다.
@@ -306,8 +343,8 @@ final class AppState: ObservableObject {
     ///
     /// 그래서 (a) 켜진 화면이 **하나라도** 있으면 사람이 있다고 보고,
     /// (b) 전부 꺼졌더라도 꺼진 직후 [graceAfterDisplaySleep] 동안은 계속
-    /// 시도한다. 방금 자리를 뜬 것과 방금 잠금 버튼을 누른 것은 구분할 수
-    /// 없으므로, 짧은 유예를 주는 쪽이 맞다.
+    /// 시도한다. 유예는 전환 중에 상태가 튀는 걸 견디는 용도지, 꺼진 화면
+    /// 앞에서 얼굴을 기다리는 용도가 아니다 — 그건 어차피 안 된다.
     private func peopleMightBeHere() -> Bool {
         if anyDisplayAwake() {
             displaysSleptAt = nil
