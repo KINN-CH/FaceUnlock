@@ -28,8 +28,15 @@ final class LockOverlayController {
 
     static let shared = LockOverlayController()
 
-    private var panel: OverlayPanel?
-    private var hosting: NSHostingView<LockOverlayView>?
+    /// 화면 **하나당 하나씩** 만든다.
+    ///
+    /// 예전엔 `NSScreen.main` 한 곳에만 띄웠는데, 그 속성은 "가장 큰 화면" 이
+    /// 아니라 **키 윈도우가 있는 화면**이다. 잠금화면에는 우리 키 윈도우가
+    /// 없어서 어느 화면이 될지 예측할 수 없고, 실제로 외장 모니터를 쓰는
+    /// 환경에서 표시가 노트북 화면에만 떠서 안 보인다는 신고가 나왔다.
+    /// 잠금화면 자체가 모든 디스플레이에 뜨므로 표시도 그래야 한다.
+    private var panels: [OverlayPanel] = []
+    private var hostings: [NSHostingView<LockOverlayView>] = []
 
     private init() {}
 
@@ -38,8 +45,8 @@ final class LockOverlayController {
     /// `locked` 를 인자로 받는 이유. 예전엔 여기서 직접
     /// `LockMonitor.screenIsLockedNow()` 를 불렀는데, 그 값은
     /// `CGSSessionScreenIsLocked` 를 그대로 읽는 것이라 잠긴 **직후** 잠깐
-    /// false 로 보인다. 그 틈에 상태 전이가 전부 지나가버리면 표시가 영영
-    /// 안 뜬다. 실제로 그렇게 됐다. 알림 기반 플래그와 OR 로 묶는다.
+    /// false 로 보인다. 그 틈에 상태 전이가 지나가면 표시가 안 뜬다.
+    /// 알림 기반 플래그와 OR 로 묶는다.
     ///
     /// 느슨하게 잡아도 안전하다. 이 창은 포커스를 못 가져가고, 화면이 풀리면
     /// 상태가 `.idle` 이 되어 `lockScreenText` 가 nil 이라 곧바로 사라진다.
@@ -49,7 +56,7 @@ final class LockOverlayController {
             return
         }
         guard locked else {
-            Log.app.debug("잠금화면 표시 보류 — 잠김으로 보이지 않음")
+            Log.app.info("잠금화면 표시 보류 — 잠김으로 보이지 않음")
             hide()
             return
         }
@@ -57,7 +64,7 @@ final class LockOverlayController {
     }
 
     func hide() {
-        panel?.orderOut(nil)
+        panels.forEach { $0.orderOut(nil) }
     }
 
     /// 잠그지 않고 모양·위치만 확인한다. 메뉴에서 직접 부를 때만 쓴다.
@@ -76,21 +83,38 @@ final class LockOverlayController {
     }
 
     private func show(text: String, symbol: String) {
-        let view = LockOverlayView(text: text, symbol: symbol)
-
-        if let hosting, let panel {
-            hosting.rootView = view
-            layout(panel: panel, hosting: hosting)
-            panel.orderFrontRegardless()
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else {
+            Log.app.error("잠금화면 표시 실패 — 화면을 하나도 찾지 못했습니다")
             return
         }
 
-        let hostingView = NSHostingView(rootView: view)
+        // 모니터를 꽂거나 빼면 개수가 달라진다. 그때는 통째로 다시 만든다.
+        if panels.count != screens.count {
+            panels.forEach { $0.orderOut(nil) }
+            panels.removeAll()
+            hostings.removeAll()
+            for _ in screens {
+                let hosting = NSHostingView(rootView: LockOverlayView(text: text, symbol: symbol))
+                panels.append(makePanel(hosting: hosting))
+                hostings.append(hosting)
+            }
+            Log.app.info("잠금화면 표시 생성 — 화면 \(screens.count, privacy: .public)개")
+        }
+
+        for (i, screen) in screens.enumerated() {
+            hostings[i].rootView = LockOverlayView(text: text, symbol: symbol)
+            layout(panel: panels[i], hosting: hostings[i], screen: screen)
+            panels[i].orderFrontRegardless()
+        }
+    }
+
+    private func makePanel(hosting: NSView) -> OverlayPanel {
         let win = OverlayPanel(contentRect: .zero,
                                styleMask: [.borderless, .nonactivatingPanel],
                                backing: .buffered,
                                defer: false)
-        win.contentView = hostingView
+        win.contentView = hosting
         win.isOpaque = false
         win.backgroundColor = .clear
         win.hasShadow = false
@@ -102,22 +126,21 @@ final class LockOverlayController {
         win.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) + 1)
         win.collectionBehavior = [.canJoinAllSpaces, .stationary,
                                   .fullScreenAuxiliary, .ignoresCycle]
-
-        panel = win
-        hosting = hostingView
-        layout(panel: win, hosting: hostingView)
-        win.orderFrontRegardless()
-
-        // "안 보인다" 는 신고가 들어왔을 때 창이 아예 안 만들어진 건지,
-        // 만들어졌는데 잠금화면에 가려진 건지 구분할 수 있어야 한다.
-        Log.app.info("잠금화면 표시 생성 — 위치 \(NSStringFromRect(win.frame), privacy: .public), 레벨 \(win.level.rawValue)")
+        return win
     }
 
     /// 카메라 근처(화면 상단 중앙)에 놓는다. 사용자가 그쪽을 보게 되므로
     /// 시선이 자연스럽게 렌즈로 향한다.
-    private func layout(panel: NSWindow, hosting: NSView) {
-        guard let screen = NSScreen.main else { return }
-        let size = hosting.fittingSize
+    ///
+    /// 크기 지정은 **어떤 경우에도 건너뛰지 않는다.** 예전 코드는 화면을 못
+    /// 찾으면 그냥 반환해서 창을 `.zero` 크기로 방치했다 —
+    /// `orderFrontRegardless()` 를 불러도 크기가 0이면 아무것도 안 보인다.
+    private func layout(panel: NSWindow, hosting: NSView, screen: NSScreen) {
+        hosting.layoutSubtreeIfNeeded()
+        var size = hosting.fittingSize
+        if size.width < 1 || size.height < 1 {
+            size = NSSize(width: 260, height: 60)   // 최후의 보루
+        }
         let frame = screen.frame
         let origin = NSPoint(x: frame.midX - size.width / 2,
                              y: frame.maxY - size.height - 120)
