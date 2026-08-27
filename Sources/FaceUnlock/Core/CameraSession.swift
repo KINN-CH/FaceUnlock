@@ -24,10 +24,13 @@ import Foundation
 /// 미리보기는 검은 화면이고 얼굴은 영영 안 잡힌다. 런타임 오류 알림도,
 /// 세션 중단 알림도 오지 않는다 — AVFoundation 은 이때 아무 말도 안 한다.
 ///
-/// 그래서 이 클래스는 **자기가 켜졌다고 믿지 않는다.** 시작한 뒤
-/// [firstFrameTimeout] 안에 프레임이 실제로 들어오는지 확인하고, 안 들어오면
-/// 장치를 통째로 다시 연다([hardReset]). 껐다 켜는 것만으로는 이 상태에서
-/// 빠져나오지 못하고 입력·출력을 떼어내야 장치가 살아난다.
+/// 더 나쁜 건 프레임이 잠깐 오다가 1~3초 뒤에 끊기는 경우다. "테스트가 두
+/// 번은 되다가 세 번째부터 검은 화면" 이 그것이었다.
+///
+/// 그래서 이 클래스는 **자기가 켜졌다고 믿지 않는다.** 도는 동안 내내
+/// 프레임이 실제로 들어오는지 감시하고([startWatchdog]), 첫 장이 안 오거나
+/// 오던 게 끊기면 장치를 통째로 다시 연다([hardReset]). 껐다 켜는 것만으로는
+/// 이 상태에서 빠져나오지 못하고 입력·출력을 떼어내야 장치가 살아난다.
 final class CameraSession: NSObject {
 
     static let shared = CameraSession()
@@ -75,16 +78,27 @@ final class CameraSession: NSObject {
     private var restartAttempts = 0
     private let maxRestartAttempts = 3
 
-    /// 시작 시도 일련번호. 예정된 첫 프레임 검사가 **그 시작에 대한 것인지**
-    /// 구분한다. 이게 없으면 이미 정지·재시작된 뒤에 늦게 도착한 검사가
-    /// 멀쩡히 도는 세션을 재개방해버린다.
+    /// 시작 시도 일련번호. 예정된 감시가 **그 시작에 대한 것인지** 구분한다.
+    /// 이게 없으면 이미 정지·재시작된 뒤에 늦게 도착한 감시가 멀쩡히 도는
+    /// 세션을 재개방해버린다.
     private var startGeneration = 0
+    /// 이번 시작 시각. 첫 프레임을 얼마나 기다렸는지 재는 기준.
+    private var startedAt: CFTimeInterval = 0
     /// 시작 후 이 시간 안에 첫 프레임이 안 오면 장치가 죽은 것으로 본다.
     /// 내장 카메라는 정상이면 0.5초 안에 첫 장이 온다.
     private let firstFrameTimeout: CFTimeInterval = 2.0
-    /// 장치 재개방 시도 횟수. 프레임이 한 장이라도 오면 0으로 돌아간다.
+    /// 잘 오던 프레임이 이 시간 동안 끊기면 역시 죽은 것으로 본다.
+    /// 10fps 로 솎아 받으므로 정상이라면 간격이 0.1초를 넘지 않는다.
+    private let stallTimeout: CFTimeInterval = 2.0
+    /// 감시 주기.
+    private let watchdogInterval: CFTimeInterval = 0.5
+    /// 장치 재개방 시도 횟수.
     private var resetAttempts = 0
-    private let maxResetAttempts = 2
+    private let maxResetAttempts = 3
+    /// 이 시간 넘게 프레임을 정상적으로 받았으면 복구 예산을 되돌린다.
+    /// 프레임 한 장에 되돌리면, 켤 때마다 1초 만에 죽는 장치를 상대로
+    /// 영원히 재개방을 반복하게 된다.
+    private let healthyRunDuration: CFTimeInterval = 5
     /// 재개방 중에는 다른 복구 경로가 끼어들면 안 된다.
     /// (재개방이 부르는 `stopRunning()` 이 중단 알림을 띄우고, 그걸 받은
     ///  [scheduleRestart] 가 동시에 세션을 다시 켜려 든다.)
@@ -165,7 +179,7 @@ final class CameraSession: NSObject {
         onFrame = nil
         onFailure = nil
         shouldBeRunning = false
-        // 예정된 첫 프레임 검사를 무효화한다.
+        // 예정된 감시를 무효화한다.
         startGeneration &+= 1
         guard session.isRunning else { return }
         session.stopRunning()
@@ -183,6 +197,7 @@ final class CameraSession: NSObject {
         }
         guard !session.isRunning else { return }
         lastFrameTime = 0
+        startedAt = CACurrentMediaTime()
         frameLock.lock(); lastFrameAt = 0; frameLock.unlock()
         session.startRunning()
 
@@ -195,23 +210,41 @@ final class CameraSession: NSObject {
             return
         }
         Log.camera.info("카메라 세션 시작")
-        scheduleFirstFrameCheck()
+        startWatchdog()
     }
 
-    // MARK: 첫 프레임 확인
+    // MARK: 프레임 감시
 
-    /// `isRunning == true` 를 믿지 않고 프레임이 실제로 오는지 확인한다.
-    private func scheduleFirstFrameCheck() {
+    /// `isRunning == true` 를 믿지 않고 프레임이 실제로 오는지 **계속** 확인한다.
+    ///
+    /// 처음에는 첫 프레임만 확인했는데, 그걸로는 부족했다. 실제 로그를 보면
+    /// 카메라는 켜지고 프레임도 잠깐 오다가 **1~3초 뒤에 끊긴다.** 첫 장이
+    /// 도착한 순간 검사가 끝나버리니 그 뒤의 죽음은 아무도 못 봤고,
+    /// 한 번 검게 변하면 영영 돌아오지 않았다.
+    private func startWatchdog() {
         startGeneration &+= 1
-        let generation = startGeneration
-        queue.asyncAfter(deadline: .now() + firstFrameTimeout) { [weak self] in
+        scheduleWatchdogTick(startGeneration)
+    }
+
+    private func scheduleWatchdogTick(_ generation: Int) {
+        queue.asyncAfter(deadline: .now() + watchdogInterval) { [weak self] in
             guard let self,
                   self.shouldBeRunning,
+                  !self.isResetting,
                   generation == self.startGeneration else { return }
-            // 한 장이라도 왔으면 장치는 살아 있다.
-            guard self.secondsSinceLastFrame == nil else { return }
-            Log.camera.error("세션은 도는데 프레임이 오지 않습니다 — 장치를 다시 엽니다")
-            self.hardReset()
+
+            if let idle = self.secondsSinceLastFrame {
+                if idle > self.stallTimeout {
+                    Log.camera.error("프레임이 \(Int(idle * 1000))ms 째 끊겼습니다 — 장치를 다시 엽니다")
+                    self.hardReset()
+                    return
+                }
+            } else if CACurrentMediaTime() - self.startedAt > self.firstFrameTimeout {
+                Log.camera.error("시작 후 첫 프레임이 오지 않습니다 — 장치를 다시 엽니다")
+                self.hardReset()
+                return
+            }
+            self.scheduleWatchdogTick(generation)
         }
     }
 
@@ -367,10 +400,13 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
 
         frameLock.lock(); lastFrameAt = now; frameLock.unlock()
-        // 프레임이 실제로 오고 있으니 복구 카운터를 되돌린다. 다음에 카메라가
-        // 죽으면 다시 처음부터 시도할 수 있어야 한다.
-        resetAttempts = 0
-        restartAttempts = 0
+        // 충분히 오래 멀쩡했을 때만 복구 예산을 되돌린다. 다음에 카메라가
+        // 죽으면 다시 처음부터 시도할 수 있어야 하지만, 켤 때마다 곧바로
+        // 죽는 장치를 상대로 무한히 재개방하지는 않아야 한다.
+        if now - startedAt > healthyRunDuration {
+            resetAttempts = 0
+            restartAttempts = 0
+        }
 
         guard now - lastFrameTime >= minimumFrameInterval else { return }
         lastFrameTime = now

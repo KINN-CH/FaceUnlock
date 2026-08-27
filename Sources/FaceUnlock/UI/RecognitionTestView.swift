@@ -96,9 +96,20 @@ final class RecognitionTestController: ObservableObject {
     }
 
     func stop() {
+        endRound(releaseCamera: true)
+    }
+
+    /// 한 회차를 끝낸다.
+    ///
+    /// `releaseCamera` 를 끄면 장치는 계속 돌아간다. 결과가 나올 때마다
+    /// 카메라를 껐다가 "다시 시도" 에서 다시 켜는 게 바로 검은 화면의
+    /// 원인이었다 — 장치가 그 짧은 껐다 켜기를 몇 번 겪으면 "돌긴 하는데
+    /// 프레임은 안 오는" 상태로 빠진다. 창이 열려 있는 동안은 켜둔다.
+    /// 미리보기가 계속 살아 있으니 결과를 읽는 동안 자기 모습도 보인다.
+    private func endRound(releaseCamera: Bool) {
         session?.cancel()
         session = nil
-        camera.stop(owner: self)
+        if releaseCamera { camera.stop(owner: self) }
         isRunning = false
     }
 
@@ -130,7 +141,7 @@ final class RecognitionTestController: ObservableObject {
     }
 
     private func apply(_ outcome: AuthSession.Outcome) {
-        stop()
+        endRound(releaseCamera: false)
         switch outcome {
         case .authenticated:
             succeeded = true

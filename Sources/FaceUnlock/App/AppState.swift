@@ -275,8 +275,10 @@ final class AppState: ObservableObject {
         // 아래 `session == nil` 가드에 계속 걸려서 잠금이 풀릴 때까지 그대로
         // 멈춰 있는다. 표시등도 안 켜진다 — "가끔 카메라가 안 뜬다" 가 이것이다.
         if session != nil, cameraLooksStalled() {
-            Log.app.error("카메라에서 프레임이 오지 않습니다 — 세션을 새로 시작합니다")
-            endSession()
+            Log.app.error("카메라에서 프레임이 오지 않습니다 — 인증 세션을 새로 시작합니다")
+            // 카메라는 건드리지 않는다. 죽었다면 CameraSession 이 스스로
+            // 장치를 다시 열고 있고, 여기서 또 껐다 켜면 그 복구를 방해한다.
+            endSession(releaseCamera: false)
             refreshStatus()
             return
         }
@@ -405,11 +407,17 @@ final class AppState: ObservableObject {
         refreshStatus()
     }
 
-    private func endSession() {
+    /// 인증 시도를 끝낸다.
+    ///
+    /// `releaseCamera` 를 끄면 장치는 계속 돌아간다. 잠긴 동안 2초마다 시도를
+    /// 반복하는데 그때마다 카메라를 껐다 켜면, 장치가 그 짧은 껐다 켜기를
+    /// 견디지 못하고 "돌긴 하는데 프레임이 안 오는" 상태로 빠진다 —
+    /// 검은 화면의 원인이었다. 다음 시도가 곧바로 이어질 상황이면 켜둔다.
+    private func endSession(releaseCamera: Bool = true) {
         session?.cancel()
         session = nil
         attemptStartedAt = nil
-        camera.stop(owner: self)
+        if releaseCamera { camera.stop(owner: self) }
     }
 
     // MARK: 세션 결과
@@ -443,7 +451,10 @@ final class AppState: ObservableObject {
 
     private func abort(_ reason: String) {
         Log.app.error("인증 중단: \(reason, privacy: .public)")
-        endSession()
+        // 아직 잠겨 있으면 2초 뒤에 또 시도한다. 그 사이 카메라를 껐다 켜봐야
+        // 장치만 흔들린다. 화면이 풀리거나 사람이 없다고 판단되면 그때 끈다.
+        let stillLocked = lockMonitor.isLocked || LockMonitor.screenIsLockedNow()
+        endSession(releaseCamera: !stillLocked)
         status = .failed(reason)
     }
 
