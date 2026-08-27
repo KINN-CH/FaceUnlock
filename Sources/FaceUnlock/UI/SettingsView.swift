@@ -24,7 +24,13 @@ struct SettingsView: View {
             .padding(20)
         }
         .frame(minWidth: 440)
-        .onAppear { state.refreshStatus() }
+        .onAppear {
+            state.refreshStatus()
+            // 사용자가 시스템 설정에서 권한을 켜는 동안 이 창은 열려 있다.
+            // 다시 읽지 않으면 초록불이 영영 안 켜진다.
+            state.startPermissionPolling()
+        }
+        .onDisappear { state.stopPermissionPolling() }
     }
 
     // MARK: 경고 — 숨기거나 접어두지 않는다
@@ -59,7 +65,7 @@ struct SettingsView: View {
             permissionRow(
                 title: "카메라",
                 detail: "얼굴을 인식하는 데 사용합니다.",
-                granted: Permissions.hasCamera
+                granted: state.hasCamera
             ) {
                 // 최초 1회는 시스템 다이얼로그가 뜬다. 그 위로 설정 창까지 열면
                 // 다이얼로그가 가려진다. 이미 거부된 뒤에만 설정으로 안내한다.
@@ -75,7 +81,7 @@ struct SettingsView: View {
             permissionRow(
                 title: "손쉬운 사용",
                 detail: "잠금 화면에 비밀번호를 입력하는 데 사용합니다.",
-                granted: Permissions.hasAccessibility
+                granted: state.hasAccessibility
             ) {
                 Permissions.checkAccessibility(prompt: true)
                 Permissions.openAccessibilitySettings()
@@ -84,7 +90,7 @@ struct SettingsView: View {
             // 이 앱을 직접 빌드해 쓰는 사람은 거의 반드시 한 번은 겪는다.
             // ad-hoc 서명의 지정 요구사항이 바이너리 해시라서, 다시 빌드하면
             // 시스템 설정 목록에는 체크된 채로 남는데 권한만 무효가 된다.
-            if !Permissions.hasAccessibility {
+            if !state.hasAccessibility {
                 Text("시스템 설정에서 이미 허용했는데도 위 표시가 켜지지 않는다면, "
                      + "목록에서 FaceUnlock 을 '−' 로 지우고 다시 추가해 주세요. "
                      + "앱을 다시 빌드하면 이전 항목이 무효가 됩니다. "
@@ -134,7 +140,7 @@ struct SettingsView: View {
                 Button(store.isEnrolled ? "다시 등록" : "얼굴 등록…") {
                     EnrollmentWindowController.shared.show()
                 }
-                .disabled(!Permissions.hasCamera || !state.modelAvailable)
+                .disabled(!state.hasCamera || !state.modelAvailable)
             }
 
             if !state.modelAvailable {
@@ -158,7 +164,7 @@ struct SettingsView: View {
                     Button("테스트…") {
                         RecognitionTestWindowController.shared.show()
                     }
-                    .disabled(!Permissions.hasCamera || !state.modelAvailable)
+                    .disabled(!state.hasCamera || !state.modelAvailable)
                 }
             }
         }

@@ -49,6 +49,18 @@ final class AppState: ObservableObject {
     /// 마지막 인증 시도의 유사도 점수. 임계값 튜닝용으로 설정 화면에 보여준다.
     @Published private(set) var lastScore: Float?
 
+    /// 권한 상태를 게시 속성으로 들고 있는 이유.
+    ///
+    /// `Permissions.hasCamera` / `hasAccessibility` 는 정적 계산 속성이라
+    /// SwiftUI 가 변화를 관찰할 방법이 없다. 사용자가 시스템 설정에서 권한을 켜고
+    /// 앱으로 돌아와도 화면이 그대로면 "허용했는데 왜 안 켜지지" 가 된다.
+    /// 게다가 손쉬운 사용은 **시스템 설정을 떠나야** 반영되는 경우가 있어서,
+    /// 창이 열려 있는 동안 주기적으로 다시 읽어야 한다.
+    @Published private(set) var hasCamera = Permissions.hasCamera
+    @Published private(set) var hasAccessibility = Permissions.hasAccessibility
+
+    private var permissionTimer: Timer?
+
     let settings = Settings.shared
     let store = FaceStore.shared
     let lockMonitor = LockMonitor()
@@ -87,6 +99,7 @@ final class AppState: ObservableObject {
         // 시작 진단. 사용자가 "왜 안 되지" 할 때 `make log` 한 줄로 답이 나와야 한다.
         // 번들 안에 모델이 들어갔는지는 조용히 실패하는 종류라 특히 명시한다.
         let ready = [
+            "얼굴 잠금 해제 \(settings.faceUnlockEnabled ? "켜짐" : "꺼짐")",
             "모델 \(modelAvailable ? "있음" : "없음")",
             "얼굴 \(store.isEnrolled ? "등록됨" : "미등록")",
             "비밀번호 \(Vault.hasPassword ? "등록됨" : "미등록")",
@@ -94,6 +107,36 @@ final class AppState: ObservableObject {
             "손쉬운 사용 \(Permissions.hasAccessibility ? "허용" : "없음")",
         ].joined(separator: ", ")
         Log.app.info("준비 상태 — \(ready, privacy: .public)")
+    }
+
+    /// 설정 창이 열려 있는 동안에만 권한을 다시 읽는다.
+    /// 항상 돌리면 잠들어 있어야 할 앱이 1초마다 깨어난다.
+    func startPermissionPolling() {
+        guard permissionTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.0, repeats: true) { _ in
+            Task { @MainActor in AppState.shared.pollPermissions() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        permissionTimer = timer
+        pollPermissions()
+    }
+
+    func stopPermissionPolling() {
+        permissionTimer?.invalidate()
+        permissionTimer = nil
+    }
+
+    private func pollPermissions() {
+        let camera = Permissions.hasCamera
+        let accessibility = Permissions.hasAccessibility
+        guard camera != hasCamera || accessibility != hasAccessibility else { return }
+
+        if accessibility != hasAccessibility {
+            Log.app.info("손쉬운 사용 권한 \(accessibility ? "허용됨" : "해제됨", privacy: .public)")
+        }
+        hasCamera = camera
+        hasAccessibility = accessibility
+        refreshStatus()
     }
 
     // MARK: 모델
@@ -122,12 +165,21 @@ final class AppState: ObservableObject {
     // MARK: 잠금 전이
 
     private func handleScreenLocked() {
-        guard settings.faceUnlockEnabled else { return }
-        guard setupBlocker() == nil else {
+        // 잠겼는데 아무 일도 안 일어나면 이유를 알 수 있어야 한다.
+        // 조용히 return 하면 사용자도 나도 왜 안 되는지 알 수 없다.
+        guard settings.faceUnlockEnabled else {
+            Log.app.info("화면 잠김 — 얼굴 잠금 해제가 꺼져 있어 넘어감")
+            return
+        }
+        if let blocker = setupBlocker() {
+            Log.app.error("화면 잠김 — 준비 안 됨: \(blocker, privacy: .public)")
             refreshStatus()
             return
         }
-        guard let profile = store.snapshot(), !profile.samples.isEmpty else { return }
+        guard let profile = store.snapshot(), !profile.samples.isEmpty else {
+            Log.app.error("화면 잠김 — 등록된 얼굴을 읽지 못했습니다")
+            return
+        }
         guard let model = loadModelIfNeeded() else {
             status = .needsSetup("얼굴 인식 모델")
             return
@@ -221,6 +273,9 @@ final class AppState: ObservableObject {
     // MARK: 상태 계산
 
     func refreshStatus() {
+        hasCamera = Permissions.hasCamera
+        hasAccessibility = Permissions.hasAccessibility
+
         guard settings.faceUnlockEnabled else {
             status = .disabled
             return
@@ -234,8 +289,8 @@ final class AppState: ObservableObject {
 
     /// 아직 채워지지 않은 선행 조건 중 첫 번째. 없으면 nil.
     func setupBlocker() -> String? {
-        if !Permissions.hasCamera        { return "카메라 권한" }
-        if !Permissions.hasAccessibility { return "손쉬운 사용 권한" }
+        if !hasCamera        { return "카메라 권한" }
+        if !hasAccessibility { return "손쉬운 사용 권한" }
         if !modelAvailable               { return "얼굴 인식 모델" }
         if !store.isEnrolled             { return "얼굴 등록" }
         if !Vault.hasPassword            { return "비밀번호 등록" }
