@@ -2,16 +2,20 @@
 //
 // 디자인 도구 없이 저장소만으로 재현할 수 있도록 벡터로 그린다.
 // 사용: swift tools/make_dmg_background.swift <출력.png>
-// 창 논리 크기 640×520pt, 레티나용 2x 픽셀 + 144dpi 메타데이터.
+// 창 논리 크기 640×570pt, 레티나용 2x 픽셀 + 144dpi 메타데이터.
 //
 // 문구는 한국어·영어 병기. 공증이 없어 Gatekeeper 가 설치 도우미를 막는데,
 // **같은 절차를 두 번 반복해야** 실제로 열린다. 여기서 막히면 설치가 통째로
 // 시작되지 않으므로 하단에 눈에 띄는 상자로 크게 적는다.
 //
 // 좌표 배치는 scripts/dmg_settings.py 의 아이콘 위치와 맞춰져 있다:
-//   FaceUnlock.app (170, 185) · Applications (470, 185)
-//   설치 도우미 (320, 340) · 먼저 읽어주세요 (560, 340)
+//   FaceUnlock.app (170, 175) · Applications (470, 175)
+//   설치 도우미 (170, 336) · 먼저 읽어주세요 (470, 336)
 //   (Finder 좌표: 좌상단 원점, 아이콘 중심)
+//
+// Finder 의 이름표는 아이콘 중심에서 아래로 ~47pt 까지 내려오고, 이름이 길면
+// 두 줄로 접힌다('설치 도우미 (Install Helper).command' 가 그렇다).
+// 그만큼 비워두지 않으면 이름표가 하단 경고 상자 위에 겹쳐 찍힌다.
 
 import AppKit
 
@@ -21,14 +25,14 @@ guard args.count == 2 else {
     exit(1)
 }
 
-let W: CGFloat = 640, H: CGFloat = 520
+let W: CGFloat = 640, H: CGFloat = 570
 let scale: CGFloat = 2
 let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
                            pixelsWide: Int(W * scale), pixelsHigh: Int(H * scale),
                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                            isPlanar: false, colorSpaceName: .deviceRGB,
                            bytesPerRow: 0, bitsPerPixel: 0)!
-rep.size = NSSize(width: W, height: H)   // 144dpi → Finder 가 640×520pt 로 표시
+rep.size = NSSize(width: W, height: H)   // 144dpi → Finder 가 640×570pt 로 표시
 
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
@@ -78,7 +82,7 @@ drawText("Drag the app into the Applications folder", center: NSPoint(x: W / 2, 
          size: 11.5, weight: .regular, color: faint)
 
 // 드래그 화살표 — 앱(170)과 Applications(470) 아이콘 사이
-let arrowY = Y(185)
+let arrowY = Y(175)
 let arrow = NSBezierPath()
 arrow.lineWidth = 5
 arrow.lineCapStyle = .round
@@ -96,18 +100,18 @@ head.lineCapStyle = .round
 head.lineJoinStyle = .round
 head.stroke()
 
-// ② 설치 도우미 — 아이콘(320, 345) 위쪽
+// ② 설치 도우미 — 아이콘(170·470, 336) 위쪽
 drawText("② '설치 도우미'를 우클릭 → 열기 — 나머지는 자동입니다",
-         center: NSPoint(x: W / 2, y: Y(266)), size: 14, weight: .medium, color: gray)
+         center: NSPoint(x: W / 2, y: Y(256)), size: 14, weight: .medium, color: gray)
 drawText("Right-click 'Install Helper' → Open — the rest is automatic",
-         center: NSPoint(x: W / 2, y: Y(286)), size: 11.5, weight: .regular, color: faint)
+         center: NSPoint(x: W / 2, y: Y(276)), size: 11.5, weight: .regular, color: faint)
 
 // 하단 상자 — Gatekeeper 차단 안내.
 //
 // 여기서 포기하는 사람이 제일 많다. 공증이 없어 macOS 가 설치 도우미를 막는데,
 // '그래도 열기' 를 한 번 눌러서는 열리지 않고 **같은 절차를 두 번** 밟아야 한다.
 // 모르면 "안 열리는 앱" 으로 보이므로 회색 각주가 아니라 상자로 강조한다.
-let boxRect = NSRect(x: 36, y: Y(504), width: W - 72, height: 112)
+let boxRect = NSRect(x: 36, y: Y(552), width: W - 72, height: 112)
 NSColor(calibratedRed: 1.0, green: 0.965, blue: 0.90, alpha: 1).setFill()
 let box = NSBezierPath(roundedRect: boxRect, xRadius: 10, yRadius: 10)
 box.fill()
@@ -117,14 +121,14 @@ box.stroke()
 
 let warn = NSColor(calibratedRed: 0.45, green: 0.31, blue: 0.05, alpha: 1)
 let inner = boxRect.width - 28
-drawText("⚠️  ‘그래도 열기’를 두 번 반복해야 설치가 시작됩니다", center: NSPoint(x: W / 2, y: Y(414)),
+drawText("⚠️  ‘그래도 열기’를 두 번 반복해야 설치가 시작됩니다", center: NSPoint(x: W / 2, y: Y(462)),
          size: 13.5, weight: .semibold, color: warn, maxWidth: inner)
 drawText("우클릭 → 열기 → 시스템 설정 → 개인정보 보호 및 보안 → ‘그래도 열기’ → 암호 입력",
-         center: NSPoint(x: W / 2, y: Y(437)), size: 10.5, weight: .regular, color: gray, maxWidth: inner)
-drawText("‘Open Anyway’ is needed twice", center: NSPoint(x: W / 2, y: Y(465)),
+         center: NSPoint(x: W / 2, y: Y(485)), size: 10.5, weight: .regular, color: gray, maxWidth: inner)
+drawText("‘Open Anyway’ is needed twice", center: NSPoint(x: W / 2, y: Y(513)),
          size: 12, weight: .semibold, color: warn, maxWidth: inner)
 drawText("Right-click → Open → System Settings → Privacy & Security → ‘Open Anyway’ → password",
-         center: NSPoint(x: W / 2, y: Y(486)), size: 10.5, weight: .regular, color: faint, maxWidth: inner)
+         center: NSPoint(x: W / 2, y: Y(534)), size: 10.5, weight: .regular, color: faint, maxWidth: inner)
 
 NSGraphicsContext.restoreGraphicsState()
 
