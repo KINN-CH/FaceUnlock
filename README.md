@@ -1,7 +1,29 @@
+<div align="center">
+
 # FaceUnlock
 
-맥북이 잠겼을 때 카메라로 얼굴을 알아보고 대신 잠금을 풀어주는 메뉴바 앱입니다.
-Xcode 없이 Command Line Tools만으로 빌드됩니다.
+### 맥북을 얼굴로 여는 메뉴바 앱
+**Face unlock for the Mac lock screen — a menu bar app, no Xcode required.**
+
+카메라가 얼굴을 알아보면 잠금 화면을 대신 풀어줍니다.<br>
+ArcFace 임베딩 · 눈 깜빡임 확인 · 비밀번호는 Secure Enclave에 봉인.
+
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](https://github.com/KINN-CH/FaceUnlock/releases)
+[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-333333)](https://github.com/KINN-CH/FaceUnlock/releases)
+[![Swift](https://img.shields.io/badge/Swift-SwiftUI%20%C2%B7%20CoreML%20%C2%B7%20Vision-F05138?logo=swift&logoColor=white)](Sources)
+[![Release](https://img.shields.io/github/v/release/KINN-CH/FaceUnlock?color=brightgreen)](https://github.com/KINN-CH/FaceUnlock/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+`macbook-faceid` · `face-recognition` · `arcface` · `coreml` · `vision-framework`<br>
+`secure-enclave` · `swiftui` · `menu-bar-app` · `screen-unlock` · `macos`
+
+**[한국어](#한국어) · [English](#english)**
+
+</div>
+
+---
+
+<a id="한국어"></a>
 
 ## 시작하기 전에
 
@@ -51,15 +73,6 @@ Face ID가 적외선 점 3만 개로 얼굴의 입체를 읽는 것과 달리, �
 터미널 창이 뜨면 다 끝난 겁니다. 이후로는 앱 복사, quarantine 해제, 얼굴 인식
 모델 내려받기와 변환까지 한 번에 진행됩니다. 모델 변환에 몇 분 걸리고,
 Python 3.12가 없으면 Homebrew로 설치할지 물어봅니다.
-
-> **English** — Open the DMG, drag the app to `Applications`, then right-click
-> `설치 도우미 (Install Helper).command` → Open. macOS blocks it because the app
-> isn't notarized, and you have to approve it **twice**: right-click → Open,
-> then System Settings → Privacy & Security → **Open Anyway** → password, and
-> the whole thing once more. The second attempt actually runs. Once a Terminal
-> window appears you're done — it copies the app, clears the quarantine flag,
-> downloads and converts the face model, and launches FaceUnlock. The helper
-> speaks English unless your Mac is set to Korean.
 
 모델을 따로 받는 건 라이선스 때문입니다. ArcFace 가중치가 InsightFace의 비상업
 연구용 라이선스라 저장소에도 DMG에도 넣을 수 없어서, 설치 도우미가 공식
@@ -228,3 +241,244 @@ make dmg          # 배포용 DMG
 
 잠금 해제 메커니즘은 [Sapphire](https://github.com/cshariq/Sapphire)의 Face ID
 기능에서 동작 원리를 참고했습니다. 코드는 가져오지 않고 직접 구현했습니다.
+
+---
+
+<div align="center">
+
+<a id="english"></a>
+
+### English
+
+</div>
+
+## Before you turn it on
+
+The name is close, but this is not Apple's Face ID. It's a convenience tool,
+not a security control. Four things to know before you switch it on.
+
+**It stops photos, not videos.** A built-in webcam can't measure depth. Face ID
+reads the shape of your face with 30,000 infrared dots; this app sees one flat
+image. It asks you to blink, so a printed photo won't open it — but a video of
+you blinking, played back on a phone, will. That isn't fixable without a depth
+sensor, so there's no plan to fix it.
+
+**Your login password lives on the machine.** macOS gives third-party apps no
+public API for unlocking the screen, so this types the stored password into the
+lock screen for you. Which means it has to be kept in a form that can be
+decrypted. The protections that were available are in place: the symmetric key
+is derived only inside the Secure Enclave (P-256 ECDH → AES-GCM), only the
+ciphertext goes into the Keychain, and moving it to another Mac makes it
+unreadable. The plaintext is handled as `[UInt16]` rather than `String` and
+zeroed right after use. None of that helps against someone who has this Mac and
+is logged into it — the password has to be usable from the lock screen, so it
+can't be gated behind biometrics or a passphrase.
+
+**It doesn't work at the FileVault boot screen.** That screen appears before
+macOS is up, so no app can run there. This only covers the lock screen after
+you've logged in.
+
+**It ships off.** You have to turn it on in Settings.
+
+Provided with no warranty of any kind. See [LICENSE](LICENSE).
+
+## Install
+
+### From the DMG
+
+Download `FaceUnlock.dmg` from
+[Releases](https://github.com/KINN-CH/FaceUnlock/releases) and open it. Drag the
+app to `Applications` as the window shows, then right-click
+`설치 도우미 (Install Helper).command` and choose Open. The helper does the rest.
+
+The catch is that "Open" doesn't work on the first try. The app isn't notarized,
+so macOS blocks it, and you have to approve it **twice**.
+
+1. Right-click the install helper → **Open** (it gets blocked)
+2. System Settings → Privacy & Security → scroll down → **Open Anyway** → password
+3. **Repeat steps 1–2 once more.** The second attempt actually runs.
+
+Twice is normal here. If it opened on the first try, just carry on. Once a
+Terminal window appears you're done — it copies the app, clears the quarantine
+flag, downloads and converts the face model, and launches FaceUnlock. The
+conversion takes a few minutes, and if Python 3.12 is missing it offers to
+install it with Homebrew. The helper speaks English unless your Mac is set to
+Korean.
+
+The model is downloaded separately for licensing reasons. The ArcFace weights
+are under InsightFace's non-commercial research license, so they can't ship in
+the repo or the DMG; the helper fetches them from the official release and puts
+them in `~/Library/Application Support/FaceUnlock/Models/`.
+
+> Going through all that for an unsigned app from a stranger is a genuinely
+> risky habit. If you'd rather not, build from source. That's why the repo is
+> public.
+
+### From source
+
+This is the cleaner path. No quarantine flag, and a stable signature, so
+permissions and Keychain entries survive updates.
+
+```bash
+git clone https://github.com/KINN-CH/FaceUnlock.git
+cd FaceUnlock
+make model      # download ArcFace + convert to CoreML (once, a few hundred MB)
+make install    # install into /Applications
+```
+
+You'll need macOS 14 or later on Apple Silicon, Command Line Tools
+(`xcode-select --install`), and Python 3.11 or 3.12 for the conversion —
+coremltools doesn't support 3.13 yet.
+
+## First-time setup
+
+Open **Settings** from the face icon in the menu bar and work down the list.
+
+1. **Camera** permission — for recognition
+2. **Accessibility** permission — needed to type the password into the lock screen
+3. **Add a face** — nine poses. You don't press anything: follow the prompt,
+   hold still for a moment, and it captures on its own. Order doesn't matter, so
+   if you tilt your head up while it's asking for left, the up slot fills first.
+   Up to three people; nothing is saved until you've taken all nine and pressed
+   Done
+4. **Login password** — verified against the real one before it's stored
+5. Turn on **Unlock with face**
+
+Lock with `Ctrl`+`Cmd`+`Q`, look at the camera, and it opens within a few
+seconds. Language follows the system by default; Korean and English can be
+picked in Settings.
+
+Three settings are adjustable.
+
+| Setting | Default | |
+|---|---|---|
+| Match strictness | 0.48 | Higher means strangers are less likely to get in, and so are you |
+| Blink check | On | Off means a printed photo opens it. Leave it on |
+| Recognition timeout | 20s | After that it gives up and hands over to the password field |
+
+## How it works
+
+```
+screen locks (com.apple.screenIsLocked)
+  → camera starts (only while locked and the display is awake)
+  → Vision face detection + 5-point landmarks (20fps)
+  → quality gate (size · edge margin · sharpness)
+  → similarity transform to 112×112 + exposure normalization + CLAHE
+  → ArcFace CoreML → 512-d embedding (10/s max)
+  → cosine similarity against enrolled faces, 3 consecutive frames required
+  → blink check → re-verify identity right after the blink
+  → re-check the lock state → inject password → Return
+```
+
+A few decisions here were deliberate.
+
+**The lock state is re-checked immediately before injection.** This is the most
+important line in the app. Injecting into a screen that's already unlocked types
+your password in plain sight, into whatever document or terminal was open. If
+the state can't be read, it's treated as *not locked* and nothing is typed.
+Failing is the safe direction.
+
+**One frame is never enough.** Three consecutive frames have to match, and the
+counter resets to zero the moment the face leaves the view — that's what stops
+someone being swapped in after a match. For the same reason the embedding is
+verified once more right after a blink is detected, since the face could change
+while the eyes are shut.
+
+**When the display sleeps, the camera stops.** There's no reason to film a
+screen nobody is looking at all night, locked or not. The camera comes back the
+instant the display wakes. Detection and blink tracking run at 20fps so short
+blinks aren't missed; only the expensive embedding is capped at 10 per second to
+keep the CPU quiet.
+
+**A rejected password stops everything.** If the lock screen refuses the stored
+password — after you change it in macOS, say — automatic unlocking is disabled
+and you're prompted to re-enroll it. Repeatedly pushing a wrong password makes
+macOS start adding delays.
+
+## The things that fail quietly
+
+A build that compiles isn't a build that's correct. There are a few places in
+this code that can be wrong without raising an error, so each has a check.
+
+| Check | What it catches | Run |
+|---|---|---|
+| Lock guard | Treating an unlocked screen as locked and **typing the password in plain sight** | `--selftest` |
+| Transform residual | A mistake in the 5-point alignment math | `--selftest` |
+| Render orientation | CoreImage (bottom-left origin) ↔ bitmap (top-left origin) flip | `--selftest` |
+| Preprocessing cross-check | RGB/BGR swap, NCHW/NHWC mix-up, wrong normalization constants | `make xcheck` |
+| Conversion gate | Dropped layers, a bad transpose, quantization loss | `make model` |
+
+The last three matter most. CoreML happily returns a 512-d vector even when the
+channel order is wrong, and the only symptom is "it finds faces but never
+matches anyone" — which takes a long time to trace back.
+
+Current numbers: preprocessing cross-check `cos = 0.9987` (2.92° off), model
+conversion `cos = 1.000000` in FP32 and `0.9976` (3.95°) in FP16. The match
+threshold of 0.48 is about 61° in angle, so that much drift is irrelevant.
+
+## Known problems
+
+**The first launch of a new build stalls for about 30 seconds.** A Keychain
+prompt appears; choose "Always Allow" and it's instant from then on. The access
+list on a Keychain item is recorded by the app's cdhash, so every changed build
+gets asked once. There's no way around it without a Team ID.
+
+**Ad-hoc signing invalidates Accessibility permission on every rebuild.** The
+designated requirement of an ad-hoc signature is the binary hash itself
+(`cdhash H"b5e93fc5e2..."`). Change one line and the hash changes and the
+permission is void — while the checkbox in System Settings stays checked, which
+makes it worse. Only `AXIsProcessTrusted()` quietly returns `false`.
+
+Running this once fixes it.
+
+```bash
+./scripts/make_signing_cert.sh
+```
+
+It creates a self-signed code-signing certificate, which switches the
+requirement to an identity-based one. As long as the certificate stays put,
+permissions survive any number of rebuilds. Free, no Apple Developer Program
+needed. `make` finds and uses the certificate automatically, and warns when it
+falls back to ad-hoc. If the permission is already void, remove FaceUnlock from
+System Settings → Accessibility with `−` and add it again — unchecking and
+rechecking doesn't refresh the stale entry.
+
+Beyond that: the built-in camera is preferred over external webcams, and
+recognition fails in a very dark room. Screen glow is usually enough; if it
+isn't, type the password.
+
+## Development
+
+```bash
+make debug        # build + sign
+make run          # build and launch
+make log          # log stream (passwords and embeddings are never logged)
+make aligntest && ./build/aligntest --selftest    # safety guard · alignment · orientation
+make xcheck       # Swift preprocessing ↔ original ONNX cross-check
+./build/aligntest a.jpg b.jpg                     # compare two photos
+make release      # optimized build
+make dmg          # distributable DMG
+```
+
+`--selftest` runs without any photos. A single vertical flip between CoreImage
+and the bitmap silently ruins every embedding without raising an error, so this
+exists to catch it automatically.
+
+## Model
+
+Face embeddings come from InsightFace's ArcFace (`buffalo_l` / `w600k_r50`).
+The non-commercial research license keeps it out of the repo and out of
+releases, so it's downloaded from the
+[official InsightFace release](https://github.com/deepinsight/insightface/releases/tag/v0.7)
+and converted to CoreML locally. Check the license yourself before any
+commercial use. The conversion script only passes when PyTorch and CoreML
+outputs agree to a cosine similarity of 0.999 or better — drift here makes the
+whole pipeline meaningless.
+
+## License
+
+[MIT](LICENSE). The model weights are separate and follow InsightFace's license.
+
+The unlock mechanism follows the approach used by
+[Sapphire](https://github.com/cshariq/Sapphire)'s Face ID feature. No code was
+taken; it's a clean reimplementation.
