@@ -13,7 +13,10 @@ final class AuthSession {
 
     enum Progress {
         case searching                    // 얼굴이 안 보임
-        case faceDetected                 // 얼굴은 있으나 아직 불일치
+        /// 얼굴은 있으나 아직 불일치. 점수를 함께 싣는다 — 임계값을 조정하려면
+        /// "안 맞음"이 아니라 "얼마나 안 맞는지"를 봐야 한다.
+        /// 임베딩을 못 뽑은 프레임에서는 nil.
+        case faceDetected(score: Float?)
         case matching(score: Float)       // 일치 진행 중 (연속 카운트 채우는 중)
         case blinkChallenge               // 얼굴 확인됨. 깜빡임 대기
         case verifying                    // 깜빡임 직후 재확인
@@ -100,7 +103,7 @@ final class AuthSession {
         }
 
         guard detector.passesQualityGate(face, in: pixelBuffer) else {
-            report(.faceDetected)
+            report(.faceDetected(score: nil))
             consecutiveMatches = 0
             return
         }
@@ -145,14 +148,14 @@ final class AuthSession {
 
     private func identify(face: VNFaceObservation, in pixelBuffer: CVPixelBuffer) {
         guard let result = embedAndMatch(face: face, in: pixelBuffer) else {
-            report(.faceDetected)
+            report(.faceDetected(score: nil))
             consecutiveMatches = 0
             return
         }
 
         guard result.passes(threshold: config.threshold) else {
             consecutiveMatches = 0
-            report(.faceDetected)
+            report(.faceDetected(score: result.score))
             return
         }
 
@@ -182,13 +185,15 @@ final class AuthSession {
 
     /// 같은 진행 상태를 매 프레임 올리면 UI 가 계속 갱신된다. 바뀔 때만 보낸다.
     private func report(_ progress: Progress) {
+        // 점수가 실린 상태는 점수를 키에 넣는다. 안 그러면 첫 프레임 이후
+        // 점수가 변해도 UI 가 갱신되지 않아 임계값 조정에 쓸 수 없다.
         let key: String
         switch progress {
-        case .searching:      key = "searching"
-        case .faceDetected:   key = "face"
-        case .matching:       key = "matching"
-        case .blinkChallenge: key = "blink"
-        case .verifying:      key = "verify"
+        case .searching:              key = "searching"
+        case .faceDetected(let s):    key = "face:\(s.map { String(format: "%.2f", $0) } ?? "-")"
+        case .matching(let s):        key = "matching:\(String(format: "%.2f", s))"
+        case .blinkChallenge:         key = "blink"
+        case .verifying:              key = "verify"
         }
         guard key != lastProgress else { return }
         lastProgress = key

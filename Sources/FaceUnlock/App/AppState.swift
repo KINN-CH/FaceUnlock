@@ -165,7 +165,9 @@ final class AppState: ObservableObject {
     private func apply(_ progress: AuthSession.Progress) {
         switch progress {
         case .searching:      status = .watching
-        case .faceDetected:   status = .watching
+        case .faceDetected(let score):
+            lastScore = score
+            status = .watching
         case .matching(let score):
             lastScore = score
             status = .matching

@@ -61,8 +61,15 @@ struct SettingsView: View {
                 detail: "얼굴을 인식하는 데 사용합니다.",
                 granted: Permissions.hasCamera
             ) {
-                Task { _ = await Permissions.requestCamera(); state.refreshStatus() }
-                Permissions.openCameraSettings()
+                // 최초 1회는 시스템 다이얼로그가 뜬다. 그 위로 설정 창까지 열면
+                // 다이얼로그가 가려진다. 이미 거부된 뒤에만 설정으로 안내한다.
+                Task {
+                    let granted = await Permissions.requestCamera()
+                    state.refreshStatus()
+                    if !granted, Permissions.cameraStatus != .notDetermined {
+                        Permissions.openCameraSettings()
+                    }
+                }
             }
 
             permissionRow(
@@ -120,6 +127,24 @@ struct SettingsView: View {
                      + "Resources/Models/ArcFace.mlpackage 를 만든 뒤 다시 빌드해 주세요.")
                     .font(.caption).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // 비밀번호를 등록하기 **전에** 인식만 확인할 수 있어야 한다.
+            // 안 그러면 첫 테스트가 곧 비밀번호 주입 테스트가 된다.
+            if store.isEnrolled {
+                Divider()
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("인식 테스트")
+                        Text("잠금 해제 없이 인식만 확인합니다. 임계값을 정할 때 쓰세요.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("테스트…") {
+                        RecognitionTestWindowController.shared.show()
+                    }
+                    .disabled(!Permissions.hasCamera || !state.modelAvailable)
+                }
             }
         }
     }
