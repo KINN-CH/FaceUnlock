@@ -2,14 +2,15 @@
 //
 // 디자인 도구 없이 저장소만으로 재현할 수 있도록 벡터로 그린다.
 // 사용: swift tools/make_dmg_background.swift <출력.png>
-// 창 논리 크기 640×460pt, 레티나용 2x 픽셀 + 144dpi 메타데이터.
+// 창 논리 크기 640×520pt, 레티나용 2x 픽셀 + 144dpi 메타데이터.
 //
-// 문구는 한국어·영어 병기. 공증이 없어 첫 실행이 Gatekeeper 에 차단되는
-// 실제 절차('그래도 열기' → 암호 입력 → 다시 열기)를 하단에 그대로 적는다.
+// 문구는 한국어·영어 병기. 공증이 없어 Gatekeeper 가 설치 도우미를 막는데,
+// **같은 절차를 두 번 반복해야** 실제로 열린다. 여기서 막히면 설치가 통째로
+// 시작되지 않으므로 하단에 눈에 띄는 상자로 크게 적는다.
 //
 // 좌표 배치는 scripts/dmg_settings.py 의 아이콘 위치와 맞춰져 있다:
 //   FaceUnlock.app (170, 185) · Applications (470, 185)
-//   설치 도우미 (320, 345) · 먼저 읽어주세요 (560, 345)
+//   설치 도우미 (320, 340) · 먼저 읽어주세요 (560, 340)
 //   (Finder 좌표: 좌상단 원점, 아이콘 중심)
 
 import AppKit
@@ -20,14 +21,14 @@ guard args.count == 2 else {
     exit(1)
 }
 
-let W: CGFloat = 640, H: CGFloat = 460
+let W: CGFloat = 640, H: CGFloat = 520
 let scale: CGFloat = 2
 let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
                            pixelsWide: Int(W * scale), pixelsHigh: Int(H * scale),
                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                            isPlanar: false, colorSpaceName: .deviceRGB,
                            bytesPerRow: 0, bitsPerPixel: 0)!
-rep.size = NSSize(width: W, height: H)   // 144dpi → Finder 가 640×460pt 로 표시
+rep.size = NSSize(width: W, height: H)   // 144dpi → Finder 가 640×520pt 로 표시
 
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
@@ -44,15 +45,26 @@ let ink   = NSColor(calibratedWhite: 0.22, alpha: 1)
 let gray  = NSColor(calibratedWhite: 0.38, alpha: 1)
 let faint = NSColor(calibratedWhite: 0.52, alpha: 1)
 
+/// 가운데 정렬로 한 줄 그린다. `maxWidth` 를 넘으면 경고를 띄운다 —
+/// 한국어와 영어는 같은 문장이라도 폭이 배로 차이 나서, 문구를 고칠 때
+/// 한쪽이 조용히 창 밖으로 삐져나가기 쉽다.
+@discardableResult
 func drawText(_ text: String, center: NSPoint, size: CGFloat,
-              weight: NSFont.Weight, color: NSColor) {
+              weight: NSFont.Weight, color: NSColor,
+              maxWidth: CGFloat = W - 40) -> CGFloat {
     let attrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: size, weight: weight),
         .foregroundColor: color,
     ]
     let str = NSAttributedString(string: text, attributes: attrs)
     let bounds = str.size()
+    if bounds.width > maxWidth {
+        FileHandle.standardError.write(
+            "경고: 문구가 \(Int(bounds.width))pt 로 한계 \(Int(maxWidth))pt 를 넘습니다 — \"\(text)\"\n"
+                .data(using: .utf8)!)
+    }
     str.draw(at: NSPoint(x: center.x - bounds.width / 2, y: center.y - bounds.height / 2))
+    return bounds.width
 }
 
 // 제목
@@ -90,11 +102,29 @@ drawText("② '설치 도우미'를 우클릭 → 열기 — 나머지는 자동
 drawText("Right-click 'Install Helper' → Open — the rest is automatic",
          center: NSPoint(x: W / 2, y: Y(286)), size: 11.5, weight: .regular, color: faint)
 
-// 하단 — Gatekeeper 차단 절차 안내 (실제 겪는 순서 그대로)
-drawText("처음 실행은 macOS가 차단합니다: 시스템 설정 → 개인정보 보호 및 보안 → '그래도 열기' → 암호 입력 → 다시 열기",
-         center: NSPoint(x: W / 2, y: Y(424)), size: 10.5, weight: .regular, color: faint)
-drawText("First run is blocked by macOS: System Settings → Privacy & Security → 'Open Anyway' → enter password → open again",
-         center: NSPoint(x: W / 2, y: Y(441)), size: 10.5, weight: .regular, color: faint)
+// 하단 상자 — Gatekeeper 차단 안내.
+//
+// 여기서 포기하는 사람이 제일 많다. 공증이 없어 macOS 가 설치 도우미를 막는데,
+// '그래도 열기' 를 한 번 눌러서는 열리지 않고 **같은 절차를 두 번** 밟아야 한다.
+// 모르면 "안 열리는 앱" 으로 보이므로 회색 각주가 아니라 상자로 강조한다.
+let boxRect = NSRect(x: 36, y: Y(504), width: W - 72, height: 112)
+NSColor(calibratedRed: 1.0, green: 0.965, blue: 0.90, alpha: 1).setFill()
+let box = NSBezierPath(roundedRect: boxRect, xRadius: 10, yRadius: 10)
+box.fill()
+NSColor(calibratedRed: 0.87, green: 0.72, blue: 0.42, alpha: 1).setStroke()
+box.lineWidth = 1
+box.stroke()
+
+let warn = NSColor(calibratedRed: 0.45, green: 0.31, blue: 0.05, alpha: 1)
+let inner = boxRect.width - 28
+drawText("⚠️  ‘그래도 열기’를 두 번 반복해야 설치가 시작됩니다", center: NSPoint(x: W / 2, y: Y(414)),
+         size: 13.5, weight: .semibold, color: warn, maxWidth: inner)
+drawText("우클릭 → 열기 → 시스템 설정 → 개인정보 보호 및 보안 → ‘그래도 열기’ → 암호 입력",
+         center: NSPoint(x: W / 2, y: Y(437)), size: 10.5, weight: .regular, color: gray, maxWidth: inner)
+drawText("‘Open Anyway’ is needed twice", center: NSPoint(x: W / 2, y: Y(465)),
+         size: 12, weight: .semibold, color: warn, maxWidth: inner)
+drawText("Right-click → Open → System Settings → Privacy & Security → ‘Open Anyway’ → password",
+         center: NSPoint(x: W / 2, y: Y(486)), size: 10.5, weight: .regular, color: faint, maxWidth: inner)
 
 NSGraphicsContext.restoreGraphicsState()
 

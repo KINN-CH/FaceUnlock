@@ -12,6 +12,10 @@
 #
 # 메시지는 시스템 언어가 한국어면 한국어, 아니면 영어로 나온다.
 # DMG 에서는 '설치 도우미 (Install Helper).command' 라는 이름으로 들어간다.
+#
+# 주의: 공증이 없어서 이 파일을 열려면 우클릭 → 열기 → 시스템 설정의 '그래도 열기'
+# 절차를 **두 번** 밟아야 한다. 첫 번째는 승인만 되고 실행은 안 된다.
+# 그 안내는 DMG 배경(tools/make_dmg_background.swift)과 README 에 있다.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -33,6 +37,10 @@ fail() { if [ "$UILANG" = ko ]; then echo "오류: $1" >&2; else echo "Error: $2
 
 say "FaceUnlock 설치 도우미" "FaceUnlock Install Helper"
 echo "────────────────────────────────────────"
+# 이 창을 봤다는 건 Gatekeeper 를 통과했다는 뜻이다. 여기 오기까지 '그래도 열기'를
+# 두 번 눌러야 해서, 더 눌러야 하나 싶어 헤매는 사람이 많다. 끝났다고 알려준다.
+say "Gatekeeper 통과했습니다. '그래도 열기'는 이제 안 눌러도 됩니다 — 나머지는 자동입니다." \
+    "You're past Gatekeeper. No more 'Open Anyway' clicks — the rest is automatic."
 
 # ── 1. 앱 복사 ───────────────────────────────────────────────
 if [ -d "$APP_DST" ]; then

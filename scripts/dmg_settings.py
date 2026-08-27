@@ -11,7 +11,7 @@ icon = defines['volicon']             # noqa: F821  (볼륨 아이콘)
 volume_name = 'FaceUnlock'
 format = 'UDZO'
 
-window_rect = ((200, 120), (640, 460))
+window_rect = ((200, 120), (640, 520))
 default_view = 'icon-view'
 show_status_bar = False
 show_tab_view = False
@@ -35,7 +35,7 @@ symlinks = {'Applications': '/Applications'}
 icon_locations = {
     'FaceUnlock.app': (170, 185),
     'Applications':   (470, 185),
-    HELPER:           (320, 345),
-    README:           (560, 345),
-    '.tools':         (170, 700),      # 창 밖 — 보일 일 없다
+    HELPER:           (320, 340),
+    README:           (560, 340),
+    '.tools':         (170, 760),      # 창 밖 — 보일 일 없다
 }
