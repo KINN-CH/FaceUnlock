@@ -2,7 +2,7 @@
 
 # FaceUnlock
 
-### 맥북을 얼굴로 여는 메뉴바 앱
+### Macbook을 Face id로 여는 메뉴바 앱
 ### 맥북을 사용하는 유저가 
 ### Touch id가 없어 직접 만든 앱
 **Face unlock for the Mac lock screen — a menu bar app, no Xcode required.**
