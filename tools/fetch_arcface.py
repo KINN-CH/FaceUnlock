@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import ssl
+import subprocess
 import sys
 import urllib.request
 import zipfile
@@ -51,6 +53,63 @@ def log(msg: str) -> None:
     print(f"[fetch_arcface] {msg}", flush=True)
 
 
+def download_with_curl(url: str, tmp: Path) -> bool:
+    """macOS 기본 curl 로 받는다. 성공하면 True.
+
+    python.org 배포판 Python 은 시스템 인증서 저장소를 쓰지 않는다. 설치 후
+    'Install Certificates.command' 를 한 번 실행해야 urllib 의 HTTPS 가 되고,
+    안 하면 CERTIFICATE_VERIFY_FAILED 로 죽는다. pip 은 자기 인증서를 들고
+    다녀서 통과하기 때문에, 의존성은 다 깔린 뒤 이 다운로드만 실패한다.
+
+    남의 Mac 에서 그 명령을 먼저 실행하라고 요구할 수는 없으니, 시스템 트러스트를
+    그대로 쓰는 curl 을 먼저 시도한다. macOS 에는 항상 있다.
+    """
+    curl = shutil.which("curl") or "/usr/bin/curl"
+    if not Path(curl).exists():
+        return False
+    result = subprocess.run(
+        [curl, "-fL", "--retry", "3", "--retry-delay", "2",
+         "--progress-bar", "-o", str(tmp), url]
+    )
+    if result.returncode != 0:
+        log(f"curl 실패 (코드 {result.returncode}) — urllib 로 다시 시도합니다")
+        tmp.unlink(missing_ok=True)
+        return False
+    return tmp.exists() and tmp.stat().st_size > 0
+
+
+def download_with_urllib(url: str, tmp: Path) -> None:
+    """curl 이 안 될 때의 폴백. 인증서는 certifi 가 있으면 그걸 쓴다."""
+    context = None
+    try:
+        import certifi
+
+        context = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+
+    request = urllib.request.Request(url, headers={"User-Agent": "FaceUnlock-setup"})
+    try:
+        with urllib.request.urlopen(request, context=context) as response, \
+                open(tmp, "wb") as out:
+            total = int(response.headers.get("Content-Length") or 0)
+            read = 0
+            while chunk := response.read(1 << 20):
+                out.write(chunk)
+                read += len(chunk)
+                if total:
+                    print(f"\r  {read * 100 // total:3d}%  ({total / 1e6:.0f} MB)",
+                          end="", file=sys.stderr)
+        print(file=sys.stderr)
+    except ssl.SSLCertVerificationError as error:
+        raise SystemExit(
+            f"HTTPS 인증서 검증에 실패했습니다: {error}\n"
+            "이 Python 이 시스템 인증서를 못 읽고 있습니다. python.org 에서 받은\n"
+            "버전이라면 '/Applications/Python 3.x/Install Certificates.command' 를\n"
+            "한 번 실행한 뒤 다시 시도하거나, Homebrew 의 python@3.12 를 쓰세요."
+        ) from error
+
+
 def download(url: str, dest: Path) -> Path:
     if dest.exists() and dest.stat().st_size > 0:
         log(f"캐시 사용: {dest} ({dest.stat().st_size / 1e6:.1f} MB)")
@@ -59,13 +118,9 @@ def download(url: str, dest: Path) -> Path:
     log(f"내려받는 중: {url}")
     tmp = dest.with_suffix(dest.suffix + ".part")
 
-    def hook(blocks, block_size, total):
-        if total > 0:
-            pct = min(100, blocks * block_size * 100 // total)
-            print(f"\r  {pct:3d}%  ({total / 1e6:.0f} MB)", end="", file=sys.stderr)
+    if not download_with_curl(url, tmp):
+        download_with_urllib(url, tmp)
 
-    urllib.request.urlretrieve(url, tmp, reporthook=hook)
-    print(file=sys.stderr)
     tmp.rename(dest)
     log(f"완료: {dest} ({dest.stat().st_size / 1e6:.1f} MB)")
     return dest
