@@ -21,6 +21,7 @@ struct SettingsView: View {
                 passwordSection
                 behaviourSection
                 languageSection
+                aboutFooter
                 Spacer(minLength: 0)
             }
             .padding(20)
@@ -374,6 +375,24 @@ struct SettingsView: View {
             .labelsHidden()
         }
     }
+
+    // MARK: 만든 사람
+
+    /// 창 맨 아래의 작은 크레딧. 방해하지 않도록 본문보다 옅게 둔다.
+    private var aboutFooter: some View {
+        VStack(spacing: 2) {
+            Divider().padding(.bottom, 6)
+            Text("FaceUnlock \(Self.appVersion) · Cheolho Kim (KINN-CH)")
+            Link("github.com/KINN-CH/FaceUnlock",
+                 destination: URL(string: "https://github.com/KINN-CH/FaceUnlock")!)
+        }
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
+        .frame(maxWidth: .infinity)
+    }
+
+    private static let appVersion =
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
 
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {

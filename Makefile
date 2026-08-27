@@ -13,7 +13,7 @@ RES_DIR    := $(CONTENTS)/Resources
 SOURCES    := $(shell find Sources -name '*.swift')
 SWIFT_OPTS := -parse-as-library -target $(TARGET) -swift-version 5
 
-.PHONY: all debug release run clean install sign check aligntest model dmg
+.PHONY: all debug release run clean install sign check aligntest icon model dmg
 
 all: debug
 
@@ -28,6 +28,7 @@ bundle: $(SOURCES) Resources/Info.plist
 	swiftc $(SWIFT_OPTS) -o $(MACOS_DIR)/$(APP_NAME) $(SOURCES)
 	@cp Resources/Info.plist $(CONTENTS)/Info.plist
 	@if [ -d Resources/Models ]; then cp -R Resources/Models $(RES_DIR)/; fi
+	@if [ -f Resources/AppIcon.icns ]; then cp Resources/AppIcon.icns $(RES_DIR)/; fi
 	@echo "APPL????" > $(CONTENTS)/PkgInfo
 	@echo "==> built $(APP_BUNDLE)"
 
@@ -76,6 +77,13 @@ aligntest: $(ALIGNTEST_SRCS)
 	swiftc -target $(TARGET) -swift-version 5 -Onone -g \
 	    -o $(BUILD_DIR)/aligntest $(ALIGNTEST_SRCS)
 	@echo "==> built $(BUILD_DIR)/aligntest"
+
+# 앱 아이콘 재생성. 결과물(Resources/AppIcon.icns)은 커밋되어 있으므로
+# 디자인을 바꿀 때만 돌리면 된다. 아이콘은 tools/make_icon.swift 가 코드로 그린다.
+icon:
+	@swift tools/make_icon.swift $(BUILD_DIR)/AppIcon.iconset
+	@iconutil -c icns $(BUILD_DIR)/AppIcon.iconset -o Resources/AppIcon.icns
+	@echo "==> Resources/AppIcon.icns"
 
 # ArcFace 모델 준비. 외부에서 가중치를 내려받으므로 최초 1회만 수동으로 실행한다.
 #   가중치는 InsightFace 비상업 연구용 라이선스 — 저장소·배포물에 포함하지 않는다.
