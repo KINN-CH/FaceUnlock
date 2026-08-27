@@ -80,6 +80,21 @@ struct SettingsView: View {
                 Permissions.checkAccessibility(prompt: true)
                 Permissions.openAccessibilitySettings()
             }
+
+            // 이 앱을 직접 빌드해 쓰는 사람은 거의 반드시 한 번은 겪는다.
+            // ad-hoc 서명의 지정 요구사항이 바이너리 해시라서, 다시 빌드하면
+            // 시스템 설정 목록에는 체크된 채로 남는데 권한만 무효가 된다.
+            if !Permissions.hasAccessibility {
+                Text("시스템 설정에서 이미 허용했는데도 위 표시가 켜지지 않는다면, "
+                     + "목록에서 FaceUnlock 을 '−' 로 지우고 다시 추가해 주세요. "
+                     + "앱을 다시 빌드하면 이전 항목이 무효가 됩니다. "
+                     + "저장소의 scripts/make_signing_cert.sh 를 한 번 실행해 두면 "
+                     + "다시 빌드해도 권한이 유지됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 22)
+            }
         }
     }
 

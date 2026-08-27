@@ -31,15 +31,33 @@ bundle: $(SOURCES) Resources/Info.plist
 	@echo "APPL????" > $(CONTENTS)/PkgInfo
 	@echo "==> built $(APP_BUNDLE)"
 
-# ad-hoc 서명. Developer ID 가 있다면 CODESIGN_ID 로 덮어쓴다:
+# 서명 정체성 선택.
+#
+# ad-hoc(`-`) 서명의 지정 요구사항은 바이너리 해시 그 자체라서, 다시 빌드할 때마다
+# 손쉬운 사용 권한이 조용히 무효가 된다 (시스템 설정에는 체크된 채로 남는다).
+# `./scripts/make_signing_cert.sh` 로 자체 서명 인증서를 만들어 두면 요구사항이
+# 신원 기반으로 바뀌어 재빌드에도 권한이 유지된다.
+#
+# Developer ID 가 있다면 직접 덮어쓴다:
 #   make release CODESIGN_ID="Developer ID Application: ..."
-CODESIGN_ID ?= -
+LOCAL_CERT := FaceUnlock Local Signing
+CODESIGN_ID ?= $(shell security find-identity -v -p codesigning 2>/dev/null \
+    | grep -F "$(LOCAL_CERT)" | head -1 | awk '{print $$2}')
+ifeq ($(strip $(CODESIGN_ID)),)
+CODESIGN_ID := -
+endif
+
 sign:
 	@codesign --force --sign "$(CODESIGN_ID)" \
 	    --entitlements Resources/$(APP_NAME).entitlements \
 	    --timestamp=none \
 	    $(APP_BUNDLE)
-	@echo "==> signed as '$(CODESIGN_ID)'"
+ifeq ($(CODESIGN_ID),-)
+	@echo "==> signed ad-hoc  ⚠️  다시 빌드하면 손쉬운 사용 권한이 무효가 됩니다."
+	@echo "    한 번만 실행하면 해결됩니다:  ./scripts/make_signing_cert.sh"
+else
+	@echo "==> signed with '$(LOCAL_CERT)' ($(CODESIGN_ID))"
+endif
 
 # 정렬 파이프라인 확인용 CLI. 앱 번들 없이 사진만으로 검증한다.
 #   make aligntest && ./build/aligntest photo1.jpg photo2.jpg
