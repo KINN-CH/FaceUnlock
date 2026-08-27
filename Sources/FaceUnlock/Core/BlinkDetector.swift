@@ -17,8 +17,14 @@ final class BlinkDetector {
         /// 기준선 대비 이 비율 위로 올라오면 "열림".
         var openRatio: Float = 0.80
         /// 너무 짧으면 검출 잡음, 너무 길면 그냥 눈 감고 있는 것.
+        ///
+        /// 상한을 넉넉히 잡는다. "깜빡이세요" 라는 지시를 받으면 사람은 무의식적인
+        /// 깜빡임(~150ms)이 아니라 **의식적으로 꾹 감았다 뜨는 동작**을 한다 —
+        /// 실측 1256ms. 0.6초로 자르면 본인만 계속 거부당한다.
+        /// 상한이 스푸핑을 막아주지도 않는다. 정지 사진은 EAR 전이 자체가 없어서
+        /// 애초에 이 단계까지 오지 못한다.
         var minClosedDuration: CFTimeInterval = 0.06
-        var maxClosedDuration: CFTimeInterval = 0.60
+        var maxClosedDuration: CFTimeInterval = 1.60
         /// 기준선을 세우기 전에 필요한 최소 프레임 수.
         var minBaselineSamples = 4
         /// 눈이 아예 감긴 상태로 시작한 경우를 걸러내기 위한 절대 하한.

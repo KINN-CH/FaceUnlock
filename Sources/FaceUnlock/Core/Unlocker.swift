@@ -109,7 +109,9 @@ enum Unlocker {
             throw Failure.eventCreationFailed
         }
 
-        try Vault.withPassword { units in
+        // 잠금화면에서는 Keychain 확인 창에 답할 수 없다. 물어보게 두면 여기서
+        // 영원히 멈추므로, 물어봐야 하는 상황이면 차라리 즉시 실패시킨다.
+        try Vault.withPassword(allowInteraction: false) { units in
             guard !units.isEmpty else { throw Failure.noPassword }
 
             guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),

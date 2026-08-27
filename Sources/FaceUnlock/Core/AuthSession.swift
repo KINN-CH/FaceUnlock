@@ -36,6 +36,13 @@ final class AuthSession {
         var requireBlink = true
         var timeout: TimeInterval = 20
         var blinkTimeout: TimeInterval = 8
+        /// 깜빡임 직후 재확인에 주는 시간.
+        ///
+        /// 한 프레임만 보고 판정하면 안 된다. 깜빡임이 끝난 직후는 눈꺼풀이 아직
+        /// 올라오는 중이라 임베딩 점수가 눈에 띄게 낮고, 그러면 깜빡임까지 성공해
+        /// 놓고 매번 처음으로 되돌아간다. 창을 주되 짧게 준다 — 이 사이에도 얼굴은
+        /// 계속 일치해야 하므로 "깜빡이는 동안 얼굴 바꿔치기" 방어는 그대로다.
+        var reverifyWindow: TimeInterval = 2.0
     }
 
     var onProgress: ((Progress) -> Void)?
@@ -44,7 +51,7 @@ final class AuthSession {
     private enum Phase {
         case identifying
         case awaitingBlink(deadline: CFTimeInterval)
-        case verifyingAfterBlink
+        case verifyingAfterBlink(deadline: CFTimeInterval)
         case finished
     }
 
@@ -120,26 +127,26 @@ final class AuthSession {
             }
             report(.blinkChallenge)
             if case .blinked = blink.process(face, at: now) {
-                phase = .verifyingAfterBlink
+                phase = .verifyingAfterBlink(deadline: now + config.reverifyWindow)
             }
 
-        case .verifyingAfterBlink:
+        case .verifyingAfterBlink(let verifyDeadline):
             // 눈 감긴 사이 얼굴이 바뀌었을 수 있으므로 한 번 더 확인한다.
             report(.verifying)
-            guard let result = embedAndMatch(face: face, in: pixelBuffer) else {
-                phase = .identifying
-                consecutiveMatches = 0
+
+            if let result = embedAndMatch(face: face, in: pixelBuffer),
+               result.passes(threshold: config.threshold) {
+                Log.face.info("깜빡임 후 재확인 통과 (\(result.score, format: .fixed(precision: 3)))")
+                finish(.authenticated)
                 return
             }
-            if result.passes(threshold: config.threshold) {
-                Log.face.info("깜빡임 후 재확인 통과")
-                finish(.authenticated)
-            } else {
-                Log.face.error("깜빡임 후 재확인 실패 — 처음부터 다시")
-                phase = .identifying
-                consecutiveMatches = 0
-                blink.reset()
-            }
+
+            // 아직 창이 남아 있으면 다음 프레임을 기다린다. 눈이 완전히 떠지면 통과한다.
+            guard now > verifyDeadline else { return }
+            Log.face.error("깜빡임 후 재확인 실패 — 처음부터 다시")
+            phase = .identifying
+            consecutiveMatches = 0
+            blink.reset()
 
         case .finished:
             break

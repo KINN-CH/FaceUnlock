@@ -183,14 +183,28 @@ struct SettingsView: View {
 
             if Vault.hasPassword {
                 HStack {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text("저장되어 있습니다")
+                    Image(systemName: state.vaultUnreadable
+                          ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(state.vaultUnreadable ? .orange : .green)
+                    Text(state.vaultUnreadable ? "저장되어 있으나 열 수 없습니다" : "저장되어 있습니다")
                     Spacer()
                     Button("삭제") {
                         Vault.deletePassword()
                         passwordMessage = nil
-                        state.refreshStatus()
+                        state.recheckVault()
                     }
+                }
+
+                // 앱 서명이 바뀌면 예전에 저장한 항목의 Keychain ACL 이 맞지 않게 된다.
+                // 잠금화면에서는 확인 창에 답할 수 없으니 그대로 실패한다 —
+                // 화면이 풀려 있는 지금 고쳐야 한다.
+                if state.vaultUnreadable {
+                    Text("앱을 다시 서명한 뒤라 예전 Keychain 항목에 접근할 수 없습니다. "
+                         + "위 '삭제' 를 누르고 비밀번호를 다시 등록해 주세요. "
+                         + "이 상태로는 잠금 화면에서 해제되지 않습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
                 HStack {
@@ -217,7 +231,7 @@ struct SettingsView: View {
             password = ""
             passwordOK = true
             passwordMessage = "확인 후 저장했습니다."
-            state.refreshStatus()
+            state.recheckVault()
         } catch {
             passwordOK = false
             passwordMessage = error.localizedDescription

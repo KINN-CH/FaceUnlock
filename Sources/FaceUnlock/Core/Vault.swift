@@ -76,10 +76,16 @@ enum Vault {
 
     /// 평문을 UTF-16 코드 유닛 배열로 잠깐 꺼내 준다.
     /// 클로저가 끝나면 배열은 0 으로 덮인다. **배열을 밖으로 복사해 나가지 말 것.**
-    static func withPassword<T>(_ body: (inout [UInt16]) throws -> T) throws -> T {
-        guard let sealed = Keychain.load(.password) else { throw VaultError.notStored }
+    ///
+    /// `allowInteraction: false` 는 잠금화면 전용이다. 거기서는 Keychain 이 띄우는
+    /// 확인 창에 답할 수가 없어서, 물어보게 두면 앱이 그대로 멈춘다.
+    static func withPassword<T>(allowInteraction: Bool = true,
+                                _ body: (inout [UInt16]) throws -> T) throws -> T {
+        guard let sealed = Keychain.load(.password, allowInteraction: allowInteraction) else {
+            throw VaultError.notStored
+        }
 
-        var plain = try EnclaveCrypto.open(sealed)
+        var plain = try EnclaveCrypto.open(sealed, allowInteraction: allowInteraction)
         defer { plain.resetBytes(in: 0..<plain.count) }
 
         var units = [UInt16](repeating: 0, count: plain.count / 2)
@@ -87,6 +93,43 @@ enum Vault {
         defer { units.resetBytes() }
 
         return try body(&units)
+    }
+
+    /// 화면이 풀려 있는 동안 복호화 경로를 한 번 돌려본다.
+    ///
+    /// Keychain ACL 확인 창은 앱 서명이 바뀌면 뜨는데, 그게 **잠금화면에서** 뜨면
+    /// 답할 방법이 없어 잠금 해제가 조용히 실패한다. 그래서 물어볼 수 있을 때 미리
+    /// 물어보게 만든다. 여기서 사용자가 '항상 허용' 을 누르면 그 뒤로는 안 뜬다.
+    ///
+    /// 실패하면 저장된 비밀번호를 열 수 없다는 뜻이므로, 잠금화면에 가기 전에
+    /// 재등록을 안내할 수 있도록 결과를 돌려준다. **메인 스레드에서 부르지 말 것.**
+    @discardableResult
+    static func warmUp() -> Bool {
+        guard hasPassword else { return false }
+        do {
+            try withPassword { units in _ = units.count }
+            migrateAccessIfNeeded()
+            return true
+        } catch {
+            Log.vault.error("저장된 비밀번호를 열지 못했습니다: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
+    private static let migrationKey = "KeychainACLMigrated.v1"
+
+    /// 예전 빌드가 만든 Keychain 항목은 기본 ACL 이라 서명이 바뀔 때마다 확인 창을
+    /// 띄운다. 방금 복호화에 성공했다는 건 지금은 읽을 수 있다는 뜻이므로, 이 틈에
+    /// ACL 만 갈아끼워 둔다. 그 뒤로는 잠금화면에서도 조용히 열린다.
+    private static func migrateAccessIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        Keychain.migrateAccess(.enclaveKey)
+        Keychain.migrateAccess(.fallbackKey)
+        Keychain.migrateAccess(.password)
+
+        UserDefaults.standard.set(true, forKey: migrationKey)
+        Log.vault.info("Keychain ACL 이전 완료 — 다음부터 확인 창이 뜨지 않습니다")
     }
 
     // MARK: 삭제

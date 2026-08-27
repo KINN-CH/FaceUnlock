@@ -33,23 +33,28 @@ enum EnclaveCrypto {
 
     /// Enclave 개인키와 그 자신의 공개키로 ECDH → HKDF. 결과는 매번 같지만
     /// 유도 과정이 Enclave 안에서 일어나므로 키 자체는 밖으로 나오지 않는다.
-    private static func symmetricKey() throws -> SymmetricKey {
+    private static func symmetricKey(allowInteraction: Bool) throws -> SymmetricKey {
         if usesSecureEnclave {
-            let key = try enclaveKey()
+            let key = try enclaveKey(allowInteraction: allowInteraction)
             let shared = try key.sharedSecretFromKeyAgreement(with: key.publicKey)
             return shared.hkdfDerivedSymmetricKey(using: SHA256.self,
                                                   salt: Data("FaceUnlock.v1".utf8),
                                                   sharedInfo: Data(),
                                                   outputByteCount: 32)
         }
-        return try fallbackKey()
+        return try fallbackKey(allowInteraction: allowInteraction)
     }
 
-    private static func enclaveKey() throws -> SecureEnclave.P256.KeyAgreement.PrivateKey {
-        if let blob = Keychain.load(.enclaveKey),
+    private static func enclaveKey(allowInteraction: Bool) throws
+            -> SecureEnclave.P256.KeyAgreement.PrivateKey {
+        if let blob = Keychain.load(.enclaveKey, allowInteraction: allowInteraction),
            let key = try? SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: blob) {
             return key
         }
+        // 읽기가 막혀서 실패한 것일 수도 있다. 그때 새 키를 만들면 기존 암호문을
+        // **영구히** 못 여는 상태가 되므로, 물어볼 수 없는 상황에서는 만들지 않는다.
+        guard allowInteraction else { throw CryptoError.noKey }
+
         guard let key = try? SecureEnclave.P256.KeyAgreement.PrivateKey() else {
             throw CryptoError.noKey
         }
@@ -60,10 +65,12 @@ enum EnclaveCrypto {
 
     /// Secure Enclave 가 없는 기기(구형 Intel Mac)용 폴백.
     /// 대칭키가 Keychain 에 평문으로 남으므로 보호 수준이 한 단계 낮다.
-    private static func fallbackKey() throws -> SymmetricKey {
-        if let data = Keychain.load(.fallbackKey) {
+    private static func fallbackKey(allowInteraction: Bool) throws -> SymmetricKey {
+        if let data = Keychain.load(.fallbackKey, allowInteraction: allowInteraction) {
             return SymmetricKey(data: data)
         }
+        guard allowInteraction else { throw CryptoError.noKey }
+
         let key = SymmetricKey(size: .bits256)
         let data = key.withUnsafeBytes { Data($0) }
         try Keychain.save(data, for: .fallbackKey)
@@ -75,7 +82,7 @@ enum EnclaveCrypto {
 
     static func seal(_ plaintext: Data) throws -> Data {
         do {
-            let box = try AES.GCM.seal(plaintext, using: try symmetricKey())
+            let box = try AES.GCM.seal(plaintext, using: try symmetricKey(allowInteraction: true))
             guard let combined = box.combined else {
                 throw CryptoError.sealFailed("combined 생성 실패")
             }
@@ -87,10 +94,10 @@ enum EnclaveCrypto {
         }
     }
 
-    static func open(_ ciphertext: Data) throws -> Data {
+    static func open(_ ciphertext: Data, allowInteraction: Bool = true) throws -> Data {
         do {
             let box = try AES.GCM.SealedBox(combined: ciphertext)
-            return try AES.GCM.open(box, using: try symmetricKey())
+            return try AES.GCM.open(box, using: try symmetricKey(allowInteraction: allowInteraction))
         } catch let error as CryptoError {
             throw error
         } catch {

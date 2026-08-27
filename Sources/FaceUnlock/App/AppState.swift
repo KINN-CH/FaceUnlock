@@ -59,6 +59,10 @@ final class AppState: ObservableObject {
     @Published private(set) var hasCamera = Permissions.hasCamera
     @Published private(set) var hasAccessibility = Permissions.hasAccessibility
 
+    /// 저장된 비밀번호를 실제로 열 수 있는지. 열 수 없으면 잠금화면에서 조용히
+    /// 실패하므로, 화면이 풀려 있는 지금 재등록을 안내해야 한다.
+    @Published private(set) var vaultUnreadable = false
+
     private var permissionTimer: Timer?
 
     let settings = Settings.shared
@@ -107,6 +111,27 @@ final class AppState: ObservableObject {
             "손쉬운 사용 \(Permissions.hasAccessibility ? "허용" : "없음")",
         ].joined(separator: ", ")
         Log.app.info("준비 상태 — \(ready, privacy: .public)")
+
+        recheckVault()
+    }
+
+    /// 복호화 경로를 화면이 풀려 있는 동안 한 번 돌려본다.
+    ///
+    /// Keychain 확인 창은 잠금화면에서 뜨면 답할 방법이 없다. 그래서 답할 수 있는
+    /// 지금 미리 뜨게 만든다. 메인에서 부르면 그 창이 앱 전체를 멈추므로
+    /// 반드시 백그라운드로 보낸다.
+    func recheckVault() {
+        DispatchQueue.global(qos: .utility).async {
+            let readable = Vault.hasPassword ? Vault.warmUp() : true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.vaultUnreadable = !readable
+                if !readable {
+                    Log.app.error("비밀번호 금고를 열 수 없습니다 — 설정에서 재등록이 필요합니다")
+                }
+                self.refreshStatus()
+            }
+        }
     }
 
     /// 설정 창이 열려 있는 동안에만 권한을 다시 읽는다.
@@ -294,6 +319,7 @@ final class AppState: ObservableObject {
         if !modelAvailable               { return "얼굴 인식 모델" }
         if !store.isEnrolled             { return "얼굴 등록" }
         if !Vault.hasPassword            { return "비밀번호 등록" }
+        if vaultUnreadable               { return "비밀번호 재등록" }
         return nil
     }
 }
