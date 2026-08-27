@@ -125,6 +125,9 @@ dmg: release
 	    $(DIST_DIR)/staging/$(APP_NAME).app
 	@ln -s /Applications $(DIST_DIR)/staging/Applications
 	@cp README.md $(DIST_DIR)/staging/'먼저 읽어주세요.md'
+	@mkdir -p $(DIST_DIR)/staging/.tools
+	@cp tools/fetch_arcface.py $(DIST_DIR)/staging/.tools/
+	@install -m 755 scripts/install_model.command '$(DIST_DIR)/staging/모델 설치.command'
 	@hdiutil create -quiet -volname "$(APP_NAME)" -srcfolder $(DIST_DIR)/staging \
 	    -ov -format UDZO $(DIST_DIR)/$(APP_NAME).dmg
 	@rm -rf $(DIST_DIR)/staging
