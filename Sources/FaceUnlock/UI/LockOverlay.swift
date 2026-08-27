@@ -34,14 +34,22 @@ final class LockOverlayController {
     private init() {}
 
     /// 상태가 바뀔 때마다 불린다. 띄울 문구가 없으면 감춘다.
-    func update(for status: AppState.Status) {
+    ///
+    /// `locked` 를 인자로 받는 이유. 예전엔 여기서 직접
+    /// `LockMonitor.screenIsLockedNow()` 를 불렀는데, 그 값은
+    /// `CGSSessionScreenIsLocked` 를 그대로 읽는 것이라 잠긴 **직후** 잠깐
+    /// false 로 보인다. 그 틈에 상태 전이가 전부 지나가버리면 표시가 영영
+    /// 안 뜬다. 실제로 그렇게 됐다. 알림 기반 플래그와 OR 로 묶는다.
+    ///
+    /// 느슨하게 잡아도 안전하다. 이 창은 포커스를 못 가져가고, 화면이 풀리면
+    /// 상태가 `.idle` 이 되어 `lockScreenText` 가 nil 이라 곧바로 사라진다.
+    func update(for status: AppState.Status, locked: Bool) {
         guard let text = status.lockScreenText else {
             hide()
             return
         }
-        // 잠금 상태가 아니면 절대 띄우지 않는다. 상태 전이와 실제 잠금 해제
-        // 사이에 짧은 틈이 있어서, 상태만 믿으면 풀린 화면에 남을 수 있다.
-        guard LockMonitor.screenIsLockedNow() else {
+        guard locked else {
+            Log.app.debug("잠금화면 표시 보류 — 잠김으로 보이지 않음")
             hide()
             return
         }

@@ -74,7 +74,9 @@ final class AppState: ObservableObject {
     @Published private(set) var status: Status = .disabled {
         didSet {
             guard status != oldValue else { return }
-            LockOverlayController.shared.update(for: status)
+            LockOverlayController.shared.update(
+                for: status,
+                locked: lockMonitor.isLocked || LockMonitor.screenIsLockedNow())
         }
     }
     /// 마지막 인증 시도의 유사도 점수. 임계값 튜닝용으로 설정 화면에 보여준다.
