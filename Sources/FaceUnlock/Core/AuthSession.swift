@@ -35,7 +35,12 @@ final class AuthSession {
         var requiredConsecutiveMatches = 3
         var requireBlink = true
         var timeout: TimeInterval = 20
-        var blinkTimeout: TimeInterval = 8
+        /// 깜빡임 챌린지에 주는 시간.
+        ///
+        /// 8초는 짧았다. 얼굴 일치까지 이미 5~6초가 걸리는 데다, 화면에
+        /// "깜빡이세요" 를 띄울 수단이 없어서(잠금화면 오버레이는 macOS 가
+        /// 가려버린다) 사용자가 언제 깜빡여야 하는지 모른 채 기다린다.
+        var blinkTimeout: TimeInterval = 12
         /// 깜빡임 직후 재확인에 주는 시간.
         ///
         /// 한 프레임만 보고 판정하면 안 된다. 깜빡임이 끝난 직후는 눈꺼풀이 아직
@@ -174,7 +179,11 @@ final class AuthSession {
         if config.requireBlink {
             Log.face.info("얼굴 일치 — 깜빡임 대기 시작")
             blink.reset()
-            phase = .awaitingBlink(deadline: CACurrentMediaTime() + config.blinkTimeout)
+            let now = CACurrentMediaTime()
+            phase = .awaitingBlink(deadline: now + config.blinkTimeout)
+            // 이미 얼굴이 확인된 사람을 전체 제한시간으로 끊지 않는다.
+            // 안 그러면 얼굴 인식이 오래 걸린 날 깜빡임 기회가 통째로 사라진다.
+            deadline = max(deadline, now + config.blinkTimeout + config.reverifyWindow)
             report(.blinkChallenge)
         } else {
             Log.face.info("얼굴 일치 (깜빡임 확인 없음)")

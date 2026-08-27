@@ -84,6 +84,11 @@ final class AppState: ObservableObject {
     /// 한 번 시간이 초과되면, 그 잠금이 풀릴 때까지 **다시는 시도하지 않았다.**
     /// 사용자 입장에서는 "아무리 깜빡여도 안 열린다" 로 보인다.
     private var retryTimer: Timer?
+    /// 모든 디스플레이가 꺼진 시점. 켜져 있으면 nil.
+    private var displaysSleptAt: CFTimeInterval?
+    /// 화면이 다 꺼진 뒤에도 계속 시도할 시간.
+    /// 잠금 버튼을 누르고 얼굴을 들이미는 데 걸리는 시간을 넉넉히 덮는다.
+    private let graceAfterDisplaySleep: CFTimeInterval = 120
     private let retryInterval: TimeInterval = 2
 
     let settings = Settings.shared
@@ -215,6 +220,9 @@ final class AppState: ObservableObject {
     // MARK: 잠금 전이
 
     private func handleScreenLocked() {
+        // 새 잠금은 유예 시간을 새로 준다. 잠금 버튼으로 잠그면 화면이 바로
+        // 꺼지는데, 직전 잠금에서 쓴 유예가 남아 있으면 안 된다.
+        displaysSleptAt = nil
         startAttempt()
         startRetryLoop()
     }
@@ -223,10 +231,10 @@ final class AppState: ObservableObject {
 
     /// 잠겨 있는 한 계속 다시 시도한다.
     ///
-    /// 다만 **디스플레이가 켜져 있을 때만** 시도한다. 화면이 꺼져 있으면
-    /// 카메라 앞에 아무도 없다는 뜻이라, 밤새 카메라를 돌리며 배터리를 먹고
-    /// 렌즈 옆 표시등을 켜둘 이유가 없다. 사용자가 화면을 깨우면 늦어도
-    /// `retryInterval` 안에 다시 시도가 시작된다.
+    /// 화면이 완전히 꺼진 채로 오래 지나면 멈춘다 — 밤새 카메라를 돌리며
+    /// 배터리를 먹고 렌즈 옆 표시등을 켜둘 이유가 없다. 다만 "꺼졌다" 를
+    /// 곧바로 "아무도 없다" 로 읽으면 안 된다. 자세한 이유는
+    /// [peopleMightBeHere] 참조.
     private func startRetryLoop() {
         retryTimer?.invalidate()
         retryTimer = Timer.scheduledTimer(withTimeInterval: retryInterval, repeats: true) { [weak self] _ in
@@ -249,10 +257,10 @@ final class AppState: ObservableObject {
             return
         }
 
-        // 화면이 꺼졌다. 진행 중이던 시도가 있으면 접고 사람이 돌아오길 기다린다.
-        guard displayIsAwake() else {
+        // 사람이 없을 법한 상태가 충분히 이어졌으면 접고 기다린다.
+        guard peopleMightBeHere() else {
             if session != nil {
-                Log.app.info("디스플레이 꺼짐 — 시도를 접고 대기")
+                Log.app.info("디스플레이가 꺼진 채 오래 지남 — 시도를 접고 대기")
                 endSession()
                 refreshStatus()
             }
@@ -272,8 +280,44 @@ final class AppState: ObservableObject {
         startAttempt()
     }
 
-    private func displayIsAwake() -> Bool {
-        CGDisplayIsAsleep(CGMainDisplayID()) == 0
+    /// 지금 카메라 앞에 사람이 있을 가능성이 있는가.
+    ///
+    /// 이전에는 `CGDisplayIsAsleep(CGMainDisplayID())` 하나만 봤는데, 그게
+    /// 두 가지를 다 틀렸다.
+    ///
+    /// 1. **메인 디스플레이 하나만** 봤다. 외장 모니터를 쓰면 잠글 때 그쪽이
+    ///    먼저 대기 상태로 들어가고 내장 화면은 아직 켜져 있다. 실제로 잠근 지
+    ///    6초 만에 "디스플레이 꺼짐" 으로 세션을 죽인 로그가 남았다 —
+    ///    사용자는 그 앞에 앉아 있었다.
+    /// 2. **잠금 버튼 직후를 못 쓰게 만들었다.** 잠금 버튼은 잠금과 동시에
+    ///    화면을 끈다. 그 순간이 바로 사용자가 얼굴을 들이미는 때인데,
+    ///    화면이 꺼졌다는 이유로 시도를 안 했다.
+    ///
+    /// 그래서 (a) 켜진 화면이 **하나라도** 있으면 사람이 있다고 보고,
+    /// (b) 전부 꺼졌더라도 꺼진 직후 [graceAfterDisplaySleep] 동안은 계속
+    /// 시도한다. 방금 자리를 뜬 것과 방금 잠금 버튼을 누른 것은 구분할 수
+    /// 없으므로, 짧은 유예를 주는 쪽이 맞다.
+    private func peopleMightBeHere() -> Bool {
+        if anyDisplayAwake() {
+            displaysSleptAt = nil
+            return true
+        }
+        let now = CACurrentMediaTime()
+        let since = displaysSleptAt ?? now
+        displaysSleptAt = since
+        return now - since < graceAfterDisplaySleep
+    }
+
+    private func anyDisplayAwake() -> Bool {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
+            // 목록을 못 얻었다. 여기서 "꺼졌다" 로 넘어가면 얼굴 인식이 통째로
+            // 멈추므로, 판단 불가는 켜져 있는 쪽으로 센다.
+            return true
+        }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return true }
+        return ids.prefix(Int(count)).contains { CGDisplayIsAsleep($0) == 0 }
     }
 
     /// 인증 시도 1회. 실패해도 여기서는 아무것도 되돌리지 않는다 —
