@@ -125,6 +125,13 @@ macOS 14 이상 Apple Silicon, Command Line Tools(`xcode-select --install`),
 | 눈 깜빡임 확인 | 켜짐 | 끄면 인쇄된 사진으로도 열립니다. 켜두세요 |
 | 인식 제한 시간 | 20초 | 지나면 포기하고 비밀번호 입력으로 넘어갑니다 |
 
+**재시동해도 알아서 다시 뜹니다.** 이 앱은 떠 있지 않으면 아무 일도 하지
+않으므로, **얼굴로 잠금 해제**를 처음 켤 때 로그인 항목으로 한 번 등록합니다.
+그 뒤로는 설정창의 *로그인 시 자동 실행* 토글이 주인입니다 — 껐다면 다시
+켜지 않습니다. 다만 재시동 직후 **첫 로그인 화면은 얼굴로 못 엽니다.** 그때는
+macOS가 아직 앱을 띄우기 전이라 비밀번호를 직접 입력해야 하고, 그 뒤의 화면
+잠금부터 얼굴이 동작합니다.
+
 ## 동작 방식
 
 ```
@@ -373,6 +380,13 @@ Three settings are adjustable.
 | Match strictness | 0.48 | Higher means strangers are less likely to get in, and so are you |
 | Blink check | On | Off means a printed photo opens it. Leave it on |
 | Recognition timeout | 20s | After that it gives up and hands over to the password field |
+
+**It comes back on its own after a restart.** The app does nothing unless it is
+running, so the first time you turn **Face unlock** on it registers itself as a
+login item, once. After that the *Launch at login* toggle in Settings is in
+charge — if you turn it off, it stays off. Note that the **first login screen
+after a restart cannot be opened by face**: macOS has not launched the app yet,
+so type your password there. Every screen lock after that works.
 
 ## How it works
 

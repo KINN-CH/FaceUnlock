@@ -42,20 +42,16 @@ enum Warmup {
     private static let queue = DispatchQueue(
         label: "io.github.kinnch.FaceUnlock.warmup", qos: .utility)
 
-    /// 인증에 쓰는 것과 **같은 종류의** 검출기. 실제 경로와 다른 걸 데우면
-    /// 의미가 없다.
-    private static let detector = FaceDetector()
-
-    /// 카메라가 주는 것과 같은 규격의 빈 프레임. 한 번 만들어 재사용한다.
-    private static var blankFrame: CVPixelBuffer?
-
-    /// 정렬을 마친 얼굴 자리에 넣을 더미. 값은 아무래도 좋고 크기만 맞으면 된다.
-    private static let dummyFace = [UInt8](repeating: 128, count: 112 * 112 * 4)
-
     /// 예열이 겹쳐 돌지 않게 막는다. 모델 로드 직후 호출과 설정 변경 시
     /// 호출이 같은 순간에 걸릴 수 있다.
     private static var running = false
 
+    /// ── 아무것도 남겨두지 않는다 ───────────────────────────────────────────
+    /// 검출기·빈 프레임·더미 얼굴을 예전에는 static 으로 캐시해 뒀다. 1분마다
+    /// 반복하던 시절에는 그게 맞았지만, 지금 예열은 앱을 켤 때 한 번(설정을
+    /// 껐다 켜면 몇 번 더) 도는 게 전부다. 그 몇 번을 위해 1280×720 버퍼
+    /// 3.7MB 와 Vision 검출기를 **앱이 켜져 있는 내내** 붙잡고 있을 이유가 없다.
+    /// 다시 만드는 비용은 memset 한 번이라 ms 단위다.
     static func run(model: EmbeddingModel?) {
         queue.async {
             guard !running else { return }
@@ -63,10 +59,11 @@ enum Warmup {
             defer { running = false }
 
             let started = CACurrentMediaTime()
-            if let frame = frame() {
-                _ = detector.detectPrimaryFace(in: frame)
+            if let frame = makeFrame() {
+                _ = FaceDetector().detectPrimaryFace(in: frame)
             }
-            _ = model?.embed(alignedRGBA: dummyFace)
+            // 정렬을 마친 얼굴 자리에 넣을 더미. 값은 아무래도 좋고 크기만 맞으면 된다.
+            _ = model?.embed(alignedRGBA: [UInt8](repeating: 128, count: 112 * 112 * 4))
             let elapsed = Int((CACurrentMediaTime() - started) * 1000)
 
             // 이 줄이 매번 수백 ms 로 찍힌다면 예열이 유지되지 않고 있다는 뜻이다.
@@ -79,9 +76,7 @@ enum Warmup {
     ///
     /// 규격을 맞추는 이유: Vision 은 픽셀 포맷·크기에 따라 다른 경로를 타므로,
     /// 실제와 다른 버퍼로 데우면 정작 필요한 경로는 차가운 채로 남는다.
-    private static func frame() -> CVPixelBuffer? {
-        if let blankFrame { return blankFrame }
-
+    private static func makeFrame() -> CVPixelBuffer? {
         var buffer: CVPixelBuffer?
         let attributes: [CFString: Any] = [
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
@@ -97,8 +92,6 @@ enum Warmup {
             memset(base, 128, CVPixelBufferGetBytesPerRow(created) * 720)
         }
         CVPixelBufferUnlockBaseAddress(created, [])
-
-        blankFrame = created
         return created
     }
 }

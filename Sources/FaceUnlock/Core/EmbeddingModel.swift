@@ -67,11 +67,27 @@ final class EmbeddingModel {
         // 무시할 수 있는 차이라, 이미 등록한 얼굴은 그대로 인식된다.
         config.computeUnits = .cpuOnly
 
+        let loaded: MLModel
         do {
-            model = try MLModel(contentsOf: compiled, configuration: config)
+            loaded = try MLModel(contentsOf: compiled, configuration: config)
         } catch {
-            throw LoadError.compileFailed(error.localizedDescription)
+            // 캐시가 이 macOS 에서 더는 안 열린다.
+            //
+            // 재컴파일 여부는 원본 .mlpackage 의 수정시각 비교로만 정하기 때문에,
+            // 여기서 그냥 던지면 **다음 실행에서도 같은 깨진 캐시를 다시 읽는다.**
+            // 원본은 설치 이후 영원히 그대로이므로 스스로 낫지 못하고 "모델 없음"
+            // 으로 굳는다 — 사용자가 캐시 폴더를 직접 지우기 전까지.
+            //
+            // CoreML 은 macOS 메이저 업그레이드마다 컴파일 형식을 바꿀 수 있고
+            // 그 업그레이드는 해마다 온다. 한 번은 스스로 회복할 수 있어야 한다.
+            Log.face.error("컴파일된 모델을 열지 못했습니다 — 캐시를 버리고 다시 컴파일합니다")
+            guard let rebuilt = try? Self.recompile(),
+                  let retried = try? MLModel(contentsOf: rebuilt, configuration: config) else {
+                throw LoadError.compileFailed(error.localizedDescription)
+            }
+            loaded = retried
         }
+        model = loaded
 
         let desc = model.modelDescription
         guard let input = desc.inputDescriptionsByName.keys.first else {
@@ -134,6 +150,17 @@ final class EmbeddingModel {
            cachedDate >= sourceDate {
             return cached
         }
+
+        return try recompile()
+    }
+
+    /// 캐시를 버리고 새로 컴파일한다. 수 초 걸리므로 꼭 필요할 때만 부른다.
+    private static func recompile() throws -> URL {
+        guard let packaged = locateModel(), let cacheDir = supportDirectory else {
+            throw LoadError.modelMissing
+        }
+        try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        let cached = cacheDir.appendingPathComponent("ArcFace.mlmodelc", isDirectory: true)
 
         Log.face.info("ArcFace 컴파일 중…")
         let compiled = try MLModel.compileModel(at: packaged)

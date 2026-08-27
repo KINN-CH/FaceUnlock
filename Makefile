@@ -2,6 +2,13 @@
 
 APP_NAME   := FaceUnlock
 BUNDLE_ID  := io.github.kinnch.FaceUnlock
+
+# 버전의 **단일 출처**. Resources/Info.plist 에는 자리표시자만 있고 빌드 때
+# 여기 값이 각인된다. 예전에는 plist 에 직접 적혀 있어서, 태그만 v0.1.1 로
+# 올리고 plist 는 0.1.0 인 채로 배포되는 일이 실제로 있었다.
+# 릴리스 절차: 이 두 줄을 올린다 → make dmg → git tag v$(VERSION)
+VERSION    := 0.1.2
+BUILD_NUM  := 3
 TARGET     := arm64-apple-macos14.0
 
 BUILD_DIR  := build
@@ -13,9 +20,13 @@ RES_DIR    := $(CONTENTS)/Resources
 SOURCES    := $(shell find Sources -name '*.swift')
 SWIFT_OPTS := -parse-as-library -target $(TARGET) -swift-version 5
 
-.PHONY: all debug release run clean install sign check aligntest icon model dmg
+.PHONY: all debug release run clean install sign check aligntest icon model dmg version
 
 all: debug
+
+# 릴리스 스크립트가 태그 이름을 여기서 읽어간다.
+version:
+	@echo $(VERSION)
 
 debug:   SWIFT_OPTS += -Onone -g
 debug:   bundle sign
@@ -26,11 +37,12 @@ release: bundle sign
 bundle: $(SOURCES) Resources/Info.plist
 	@mkdir -p $(MACOS_DIR) $(RES_DIR)
 	swiftc $(SWIFT_OPTS) -o $(MACOS_DIR)/$(APP_NAME) $(SOURCES)
-	@cp Resources/Info.plist $(CONTENTS)/Info.plist
+	@sed -e 's/__VERSION__/$(VERSION)/' -e 's/__BUILD__/$(BUILD_NUM)/' \
+	    Resources/Info.plist > $(CONTENTS)/Info.plist
 	@if [ -d Resources/Models ]; then cp -R Resources/Models $(RES_DIR)/; fi
 	@if [ -f Resources/AppIcon.icns ]; then cp Resources/AppIcon.icns $(RES_DIR)/; fi
 	@echo "APPL????" > $(CONTENTS)/PkgInfo
-	@echo "==> built $(APP_BUNDLE)"
+	@echo "==> built $(APP_BUNDLE)  v$(VERSION) ($(BUILD_NUM))"
 
 # 서명 정체성 선택.
 #
@@ -144,7 +156,7 @@ dmg: release
 	@./scripts/build_dmg.sh $(DIST_DIR)/staging $(BUILD_DIR)/dmg-background.png \
 	    $(DIST_DIR)/$(APP_NAME).dmg
 	@rm -rf $(DIST_DIR)/staging
-	@echo "==> $(DIST_DIR)/$(APP_NAME).dmg (ArcFace 모델 미포함 — 라이선스상 재배포 불가)"
+	@echo "==> $(DIST_DIR)/$(APP_NAME).dmg  v$(VERSION) (ArcFace 모델 미포함 — 라이선스상 재배포 불가)"
 	@echo "    설치: DMG 안 '설치 도우미 (Install Helper).command' 우클릭 → 열기"
 
 clean:

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import ServiceManagement
 import SwiftUI
 
 /// 앱 전역 상태 + 각 모듈을 엮는 조정자.
@@ -196,6 +197,7 @@ final class AppState: ObservableObject {
             .sink { [weak self] _ in
                 self?.refreshStatus()
                 self?.preloadPipelineIfEnabled()
+                self?.registerLoginItemOnce()
             }
             .store(in: &cancellables)
 
@@ -210,6 +212,7 @@ final class AppState: ObservableObject {
             "비밀번호 \(Vault.hasPassword ? "등록됨" : "미등록")",
             "카메라 권한 \(Permissions.hasCamera ? "허용" : "없음")",
             "손쉬운 사용 \(Permissions.hasAccessibility ? "허용" : "없음")",
+            "자동 실행 \(SMAppService.mainApp.status == .enabled ? "등록됨" : "안 됨")",
         ].joined(separator: ", ")
         Log.app.info("준비 상태 — \(ready, privacy: .public)")
 
@@ -229,6 +232,33 @@ final class AppState: ObservableObject {
     /// 지금은 [EmbeddingModel] 이 뉴럴 엔진을 쓰지 않는다. 쫓겨날 일이 없으니
     /// 다시 데울 일도 없다 — 그래서 타이머를 통째로 지웠다. 자세한 측정은
     /// [EmbeddingModel] 의 주석에 있다.
+    /// 얼굴 잠금 해제를 **처음 켤 때** 로그인 항목으로 한 번 등록한다.
+    ///
+    /// 이 앱은 떠 있지 않으면 아무 일도 하지 않는다. 맥을 재시동하면 그 뒤로는
+    /// 얼굴로 열리지 않는데, 원인이 "앱이 안 떠 있어서" 라는 걸 알아채기가
+    /// 어렵다 — 설정은 그대로 켜져 있고 등록한 얼굴도 그대로이기 때문이다.
+    ///
+    /// 그렇다고 설치만 해보고 둘러본 사람의 로그인 항목까지 건드릴 이유는
+    /// 없으므로, 기능을 **실제로 켠 순간**에 맞춘다.
+    ///
+    /// 딱 한 번만 한다. 그 뒤로는 설정창의 토글이 주인이다 — 사용자가 꺼둔 걸
+    /// 다음 실행에서 되살리면 그건 고장이지 편의가 아니다.
+    private func registerLoginItemOnce() {
+        let key = "didRegisterLoginItem"
+        guard settings.faceUnlockEnabled,
+              !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+
+        guard SMAppService.mainApp.status != .enabled else { return }
+        do {
+            try SMAppService.mainApp.register()
+            Log.app.info("로그인 시 자동 실행으로 등록했습니다")
+        } catch {
+            // 실패해도 앱은 그대로 돌아간다. 설정창 토글로 다시 시도할 수 있다.
+            Log.app.error("로그인 항목 등록 실패: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func preloadPipelineIfEnabled() {
         guard settings.faceUnlockEnabled else { return }
         preloadPipeline()
