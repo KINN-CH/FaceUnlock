@@ -2,16 +2,30 @@ import AVFoundation
 import CoreVideo
 import Foundation
 
-/// 내장 카메라 세션.
+/// 내장 카메라 세션. **앱 전체에서 하나뿐이다.**
 ///
 /// **잠금 상태에서만 켠다.** 상시 가동하면 카메라 표시등이 계속 켜져 있어
 /// 사용자가 감시당한다고 느끼고, 배터리도 그만큼 먹는다.
+///
+/// ── 왜 싱글턴인가 ────────────────────────────────────────────────────────
+/// 카메라 장치는 하나인데 예전에는 `AVCaptureSession` 이 셋이었다 —
+/// 잠금 해제 경로(AppState), 등록 마법사, 인식 테스트 창이 각자 만들었다.
+/// 창을 닫았다 다시 열면 **이전 세션이 아직 장치를 놓지 않은 상태에서** 새
+/// 세션이 `startRunning()` 을 부른다. 그러면 에러도 없이 표시등만 안 켜지고
+/// 프레임이 한 장도 안 온다. "간헐적으로 카메라가 안 뜬다" 가 이것이었다.
+///
+/// 이제 세션은 하나고, 쓰는 쪽은 [start(owner:onFrame:onFailure:)] 로 빌린다.
+/// 남이 빌려간 카메라를 실수로 끄지 않도록 [stop(owner:)] 는 소유자만 받는다.
 final class CameraSession: NSObject {
 
+    static let shared = CameraSession()
+
     /// 프레임 콜백. `queue` 위에서 호출된다 (메인 스레드 아님).
-    var onFrame: ((CVPixelBuffer) -> Void)?
+    private var onFrame: ((CVPixelBuffer) -> Void)?
     /// 세션을 열지 못했을 때 한 번 호출된다.
-    var onFailure: ((String) -> Void)?
+    private var onFailure: ((String) -> Void)?
+    /// 지금 카메라를 빌려간 쪽. `queue` 위에서만 만진다.
+    private weak var owner: AnyObject?
 
     private let session = AVCaptureSession()
     private let output = AVCaptureVideoDataOutput()
@@ -66,18 +80,38 @@ final class CameraSession: NSObject {
 
     // MARK: 생명주기
 
-    func start() {
+    /// 카메라를 빌린다.
+    ///
+    /// 이미 다른 쪽이 쓰고 있으면 **넘겨받는다**. 마지막에 요청한 쪽이 이긴다 —
+    /// 실제 잠금 해제 경로가 진단용 창보다 나중에 시작되는 게 정상 순서다.
+    /// (인식 테스트 창은 화면이 잠기면 스스로 놓기도 한다.)
+    func start(owner: AnyObject,
+               onFrame: @escaping (CVPixelBuffer) -> Void,
+               onFailure: @escaping (String) -> Void) {
         queue.async { [weak self] in
             guard let self else { return }
+            if let previous = self.owner, previous !== owner {
+                Log.camera.info("카메라 소유자 교체")
+            }
+            self.owner = owner
+            self.onFrame = onFrame
+            self.onFailure = onFailure
             self.shouldBeRunning = true
             self.restartAttempts = 0
             self.startOnQueue()
         }
     }
 
-    func stop() {
+    /// 빌린 쪽만 끌 수 있다. 남이 쓰는 중이면 아무 일도 하지 않는다.
+    func stop(owner: AnyObject) {
         queue.async { [weak self] in
             guard let self else { return }
+            // 소유자가 이미 사라졌으면(창이 닫히며 해제됨) 아무나 끌 수 있어야 한다.
+            // 그렇지 않으면 표시등이 켜진 채로 남는다.
+            guard self.owner == nil || self.owner === owner else { return }
+            self.owner = nil
+            self.onFrame = nil
+            self.onFailure = nil
             self.shouldBeRunning = false
             guard self.session.isRunning else { return }
             self.session.stopRunning()
@@ -219,6 +253,16 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         let now = CACurrentMediaTime()
+        // 빌려간 쪽이 stop 도 못 부르고 사라졌다. 표시등을 끄고 나온다.
+        if owner == nil && shouldBeRunning {
+            Log.camera.info("카메라 소유자가 사라져 세션을 정지합니다")
+            shouldBeRunning = false
+            session.stopRunning()
+            onFrame = nil
+            onFailure = nil
+            return
+        }
+
         frameLock.lock(); lastFrameAt = now; frameLock.unlock()
 
         guard now - lastFrameTime >= minimumFrameInterval else { return }

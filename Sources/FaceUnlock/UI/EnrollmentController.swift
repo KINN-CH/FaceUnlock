@@ -84,7 +84,7 @@ final class EnrollmentController: ObservableObject {
     @Published private(set) var isFinished = false
     @Published private(set) var currentPose: FacePose = .center
 
-    private let camera = CameraSession()
+    private let camera = CameraSession.shared
     private var capturer: EnrollmentCapturer?
 
     var progress: Double { Double(completed.count) / Double(FacePose.allCases.count) }
@@ -121,16 +121,15 @@ final class EnrollmentController: ObservableObject {
         }
         self.capturer = capturer
 
-        camera.onFrame = { [weak capturer] buffer in capturer?.process(frame: buffer) }
-        camera.onFailure = { [weak self] reason in
-            Task { @MainActor in self?.errorMessage = reason }
-        }
-        camera.start()
+        camera.start(owner: self,
+                     onFrame: { [weak capturer] buffer in capturer?.process(frame: buffer) },
+                     onFailure: { [weak self] reason in
+                         Task { @MainActor in self?.errorMessage = reason }
+                     })
     }
 
     func stop() {
-        camera.stop()
-        camera.onFrame = nil
+        camera.stop(owner: self)
         capturer = nil
     }
 

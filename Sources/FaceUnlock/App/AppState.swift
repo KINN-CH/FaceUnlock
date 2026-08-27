@@ -99,7 +99,7 @@ final class AppState: ObservableObject {
     let store = FaceStore.shared
     let lockMonitor = LockMonitor()
 
-    private let camera = CameraSession()
+    private let camera = CameraSession.shared
     private var session: AuthSession?
     private var model: EmbeddingModel?
     private var modelError: String?
@@ -110,14 +110,6 @@ final class AppState: ObservableObject {
 
     func start() {
         Log.app.info("FaceUnlock 시작")
-
-        camera.onFrame = { [weak self] buffer in
-            // 카메라 큐. 여기서 메인으로 건너가면 프레임이 밀린다.
-            self?.session?.process(frame: buffer)
-        }
-        camera.onFailure = { [weak self] reason in
-            DispatchQueue.main.async { self?.abort(reason) }
-        }
 
         lockMonitor.onLock = { [weak self] in self?.handleScreenLocked() }
         lockMonitor.onUnlock = { [weak self] in self?.handleScreenUnlocked() }
@@ -384,7 +376,14 @@ final class AppState: ObservableObject {
 
         status = .watching
         attemptStartedAt = CACurrentMediaTime()
-        camera.start()
+        camera.start(owner: self,
+                     onFrame: { [weak self] buffer in
+                         // 카메라 큐. 여기서 메인으로 건너가면 프레임이 밀린다.
+                         self?.session?.process(frame: buffer)
+                     },
+                     onFailure: { [weak self] reason in
+                         DispatchQueue.main.async { self?.abort(reason) }
+                     })
         Log.app.info("인증 세션 시작")
     }
 
@@ -410,7 +409,7 @@ final class AppState: ObservableObject {
         session?.cancel()
         session = nil
         attemptStartedAt = nil
-        camera.stop()
+        camera.stop(owner: self)
     }
 
     // MARK: 세션 결과
@@ -454,7 +453,7 @@ final class AppState: ObservableObject {
         status = .unlocking
         // 카메라부터 끈다. 주입이 끝나면 화면이 열리므로 표시등을 계속 켜둘 이유가 없다.
         session = nil
-        camera.stop()
+        camera.stop(owner: self)
 
         // Unlocker 는 sleep 으로 타이밍을 맞춘다. 메인 스레드에서 돌리면 UI 가 멈춘다.
         DispatchQueue.global(qos: .userInitiated).async {

@@ -19,7 +19,7 @@ final class RecognitionTestController: ObservableObject {
     @Published private(set) var succeeded = false
     @Published private(set) var errorMessage: String?
 
-    private let camera = CameraSession()
+    private let camera = CameraSession.shared
     private var session: AuthSession?
     private var lockObserver: NSObjectProtocol?
 
@@ -84,22 +84,21 @@ final class RecognitionTestController: ObservableObject {
         session.begin()
         self.session = session
 
-        camera.onFrame = { [weak session] buffer in session?.process(frame: buffer) }
-        camera.onFailure = { [weak self] reason in
-            Task { @MainActor in
-                self?.errorMessage = reason
-                self?.stop()
-            }
-        }
-        camera.start()
+        camera.start(owner: self,
+                     onFrame: { [weak session] buffer in session?.process(frame: buffer) },
+                     onFailure: { [weak self] reason in
+                         Task { @MainActor in
+                             self?.errorMessage = reason
+                             self?.stop()
+                         }
+                     })
         isRunning = true
     }
 
     func stop() {
         session?.cancel()
         session = nil
-        camera.onFrame = nil
-        camera.stop()
+        camera.stop(owner: self)
         isRunning = false
     }
 
