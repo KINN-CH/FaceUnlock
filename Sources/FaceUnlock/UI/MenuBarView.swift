@@ -17,8 +17,6 @@ struct MenuBarView: View {
 
         Divider()
 
-        Button("잠금화면 표시 미리보기") { LockOverlayController.shared.preview() }
-
         Button("설정…") { SettingsWindowController.shared.show() }
             .keyboardShortcut(",", modifiers: .command)
 

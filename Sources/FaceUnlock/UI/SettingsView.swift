@@ -183,10 +183,10 @@ struct SettingsView: View {
 
             if Vault.hasPassword {
                 HStack {
-                    Image(systemName: state.vaultUnreadable
+                    Image(systemName: passwordHasProblem
                           ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(state.vaultUnreadable ? .orange : .green)
-                    Text(state.vaultUnreadable ? "저장되어 있으나 열 수 없습니다" : "저장되어 있습니다")
+                        .foregroundStyle(passwordHasProblem ? .orange : .green)
+                    Text(passwordStatusText)
                     Spacer()
                     Button("삭제") {
                         Vault.deletePassword()
@@ -206,6 +206,18 @@ struct SettingsView: View {
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+
+                // 저장된 값이 실제로 거부됐다. 계속 밀어 넣으면 macOS 오입력이
+                // 쌓여 지연·재시작 요구로 이어지므로 자동 해제를 이미 멈춘 상태다.
+                if state.passwordRejected {
+                    Text("잠금 화면에서 이 비밀번호가 거부됐습니다. macOS 로그인 "
+                         + "비밀번호를 바꾸셨다면 위 '삭제' 를 누르고 새 비밀번호로 "
+                         + "다시 등록해 주세요. 틀린 비밀번호가 반복 입력되는 것을 막기 "
+                         + "위해 자동 잠금 해제를 멈춰 두었습니다.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else {
                 HStack {
                     SecureField("로그인 비밀번호", text: $password)
@@ -221,6 +233,16 @@ struct SettingsView: View {
                     .foregroundStyle(passwordOK ? .green : .red)
             }
         }
+    }
+
+    private var passwordHasProblem: Bool {
+        state.vaultUnreadable || state.passwordRejected
+    }
+
+    private var passwordStatusText: String {
+        if state.vaultUnreadable { return "저장되어 있으나 열 수 없습니다" }
+        if state.passwordRejected { return "저장되어 있으나 거부되었습니다" }
+        return "저장되어 있습니다"
     }
 
     /// 실제 로그인 비밀번호가 맞는지 확인한 뒤에만 저장한다.

@@ -31,32 +31,6 @@ final class AppState: ObservableObject {
             }
         }
 
-        /// 잠금화면 오버레이 문구. `nil` 이면 띄우지 않는다.
-        ///
-        /// 메뉴바 라벨과 따로 두는 이유: 여기서는 상태를 알리는 게 아니라
-        /// **지시**를 해야 한다. "눈을 깜빡이세요" 처럼 다음에 뭘 할지가 보여야
-        /// 사용자가 카메라 앞에서 멈칫하지 않는다.
-        var lockScreenText: String? {
-            switch self {
-            case .watching:       return "얼굴을 찾고 있습니다"
-            case .matching:       return "얼굴을 확인하는 중"
-            case .blinkChallenge: return "눈을 깜빡여 주세요"
-            case .unlocking:      return "잠금을 해제하는 중"
-            case .failed:         return "얼굴 인식 실패 — 비밀번호를 입력하세요"
-            // 잠겨 있지 않거나 준비가 안 된 상태에서는 띄울 이유가 없다.
-            case .disabled, .needsSetup, .idle: return nil
-            }
-        }
-
-        var lockScreenSymbol: String {
-            switch self {
-            case .blinkChallenge: return "eye"
-            case .unlocking:      return "lock.open"
-            case .failed:         return "exclamationmark.triangle"
-            default:              return "faceid"
-            }
-        }
-
         var label: String {
             switch self {
             case .disabled:            return "꺼짐"
@@ -71,14 +45,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published private(set) var status: Status = .disabled {
-        didSet {
-            guard status != oldValue else { return }
-            LockOverlayController.shared.update(
-                for: status,
-                locked: lockMonitor.isLocked || LockMonitor.screenIsLockedNow())
-        }
-    }
+    @Published private(set) var status: Status = .disabled
     /// 마지막 인증 시도의 유사도 점수. 임계값 튜닝용으로 설정 화면에 보여준다.
     @Published private(set) var lastScore: Float?
 
@@ -96,7 +63,28 @@ final class AppState: ObservableObject {
     /// 실패하므로, 화면이 풀려 있는 지금 재등록을 안내해야 한다.
     @Published private(set) var vaultUnreadable = false
 
+    /// 저장된 비밀번호가 잠금화면에서 거부됐다. 보통 macOS 로그인 비밀번호를
+    /// 바꿨는데 여기에 반영하지 않은 경우다.
+    @Published private(set) var passwordRejected = false
+
+    /// 연속 주입 실패 횟수.
+    ///
+    /// 재시도 루프가 생기면서 필요해졌다. 저장된 비밀번호가 낡으면 루프가
+    /// **틀린 비밀번호를 무한히** 밀어 넣는다. macOS 는 오입력이 쌓이면 지연을
+    /// 걸고, FileVault 환경에서는 재시작을 요구할 수 있다. 한 번의 unlock 호출은
+    /// 내부 재시도까지 쳐서 최대 2회를 제출하므로, 2연속이면 4회다. 거기서 끊는다.
+    private var injectionFailures = 0
+    private let maxInjectionFailures = 2
+
     private var permissionTimer: Timer?
+
+    /// 잠겨 있는 동안 계속 다시 시도하기 위한 타이머.
+    ///
+    /// 예전에는 잠금 1회당 세션 1회였다. 깜빡임을 놓치거나 얼굴을 못 찾아서
+    /// 한 번 시간이 초과되면, 그 잠금이 풀릴 때까지 **다시는 시도하지 않았다.**
+    /// 사용자 입장에서는 "아무리 깜빡여도 안 열린다" 로 보인다.
+    private var retryTimer: Timer?
+    private let retryInterval: TimeInterval = 2
 
     let settings = Settings.shared
     let store = FaceStore.shared
@@ -159,6 +147,9 @@ final class AppState: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.vaultUnreadable = !readable
+                // 비밀번호를 다시 등록했으면 거부 기록도 같이 지운다.
+                self.passwordRejected = false
+                self.injectionFailures = 0
                 if !readable {
                     Log.app.error("비밀번호 금고를 열 수 없습니다 — 설정에서 재등록이 필요합니다")
                 }
@@ -224,6 +215,70 @@ final class AppState: ObservableObject {
     // MARK: 잠금 전이
 
     private func handleScreenLocked() {
+        startAttempt()
+        startRetryLoop()
+    }
+
+    // MARK: 재시도 루프
+
+    /// 잠겨 있는 한 계속 다시 시도한다.
+    ///
+    /// 다만 **디스플레이가 켜져 있을 때만** 시도한다. 화면이 꺼져 있으면
+    /// 카메라 앞에 아무도 없다는 뜻이라, 밤새 카메라를 돌리며 배터리를 먹고
+    /// 렌즈 옆 표시등을 켜둘 이유가 없다. 사용자가 화면을 깨우면 늦어도
+    /// `retryInterval` 안에 다시 시도가 시작된다.
+    private func startRetryLoop() {
+        retryTimer?.invalidate()
+        retryTimer = Timer.scheduledTimer(withTimeInterval: retryInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.retryTick() }
+        }
+    }
+
+    private func stopRetryLoop() {
+        retryTimer?.invalidate()
+        retryTimer = nil
+    }
+
+    private func retryTick() {
+        guard lockMonitor.isLocked || LockMonitor.screenIsLockedNow() else {
+            stopRetryLoop()
+            return
+        }
+        guard settings.faceUnlockEnabled else {
+            stopRetryLoop()
+            return
+        }
+
+        // 화면이 꺼졌다. 진행 중이던 시도가 있으면 접고 사람이 돌아오길 기다린다.
+        guard displayIsAwake() else {
+            if session != nil {
+                Log.app.info("디스플레이 꺼짐 — 시도를 접고 대기")
+                endSession()
+                refreshStatus()
+            }
+            return
+        }
+
+        // 주입이 진행 중이면 절대 건드리지 않는다. performUnlock 은 세션을 먼저
+        // 비우므로 여기서 session == nil 만 보면 통과해버리고, 카메라가 다시
+        // 켜지면서 **두 번째 주입**까지 나간다.
+        if case .unlocking = status { return }
+
+        guard session == nil else { return }   // 이미 시도 중
+        // 준비가 안 됐으면 조용히 넘긴다. startAttempt 를 부르면 2초마다
+        // 같은 오류가 로그를 채운다.
+        guard setupBlocker() == nil else { return }
+
+        startAttempt()
+    }
+
+    private func displayIsAwake() -> Bool {
+        CGDisplayIsAsleep(CGMainDisplayID()) == 0
+    }
+
+    /// 인증 시도 1회. 실패해도 여기서는 아무것도 되돌리지 않는다 —
+    /// 재시도는 [startRetryLoop] 가 맡는다.
+    private func startAttempt() {
         // 잠겼는데 아무 일도 안 일어나면 이유를 알 수 있어야 한다.
         // 조용히 return 하면 사용자도 나도 왜 안 되는지 알 수 없다.
         guard settings.faceUnlockEnabled else {
@@ -273,6 +328,7 @@ final class AppState: ObservableObject {
     }
 
     private func handleScreenUnlocked() {
+        stopRetryLoop()
         endSession()
         refreshStatus()
     }
@@ -333,7 +389,23 @@ final class AppState: ObservableObject {
                 guard let self else { return }
                 switch result {
                 case .success:
+                    self.injectionFailures = 0
                     self.refreshStatus()
+
+                case .failure(.stillLocked):
+                    // 비밀번호를 실제로 제출했는데 안 열렸다 = 틀렸다는 뜻이다.
+                    // 이것만 센다. 다른 실패는 제출 자체가 없었으므로 무해하다.
+                    self.injectionFailures += 1
+                    if self.injectionFailures >= self.maxInjectionFailures {
+                        self.passwordRejected = true
+                        self.stopRetryLoop()
+                        self.endSession()
+                        Log.app.error("저장된 비밀번호가 연속 거부됨 — 자동 해제를 중단합니다")
+                        self.status = .needsSetup("비밀번호 재등록")
+                    } else {
+                        self.status = .failed(Unlocker.Failure.stillLocked.localizedDescription)
+                    }
+
                 case .failure(let error):
                     self.status = .failed(error.localizedDescription)
                 }
@@ -367,6 +439,7 @@ final class AppState: ObservableObject {
         if !store.isEnrolled             { return "얼굴 등록" }
         if !Vault.hasPassword            { return "비밀번호 등록" }
         if vaultUnreadable               { return "비밀번호 재등록" }
+        if passwordRejected              { return "비밀번호 재등록" }
         return nil
     }
 }
