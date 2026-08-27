@@ -67,7 +67,7 @@ macOS에는 서드파티 앱이 화면 잠금을 직접 해제하는 공개 API�
 업데이트할 때 권한과 Keychain 항목이 유지됩니다.
 
 ```bash
-git clone https://github.com/<your-account>/FaceUnlock.git
+git clone https://github.com/KINN-CH/FaceUnlock.git
 cd FaceUnlock
 make model      # ArcFace 모델 내려받기 + CoreML 변환 (최초 1회, 수백 MB)
 make install    # /Applications 에 설치
@@ -89,7 +89,7 @@ DMG에는 **ArcFace 모델이 들어 있지 않습니다** — InsightFace 가�
 라이선스라 재배포할 수 없기 때문입니다. 저장소를 받아 한 번만 변환해 넣어 주세요:
 
 ```bash
-git clone https://github.com/<your-account>/FaceUnlock.git
+git clone https://github.com/KINN-CH/FaceUnlock.git
 cd FaceUnlock
 make model
 mkdir -p ~/Library/Application\ Support/FaceUnlock/Models
