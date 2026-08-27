@@ -108,17 +108,27 @@ install: release
 
 # 배포용 DMG. 공증(notarization)이 없으므로 받는 쪽에서 quarantine 을 풀어야 한다.
 # README 의 설치 안내를 함께 읽도록 DMG 안에 넣어 둔다.
+#
+# **ArcFace 가중치는 뺀다.** InsightFace 사전학습 가중치는 비상업 연구용
+# 라이선스라 재배포할 수 없다. 받은 사람은 저장소에서 `make model` 을 돌려
+# ~/Library/Application Support/FaceUnlock/Models/ 에 넣는다 (README 안내).
+# 리소스를 빼면 서명이 깨지므로 뺀 뒤 다시 서명한다.
 DIST_DIR := dist
 dmg: release
 	@rm -rf $(DIST_DIR)/staging $(DIST_DIR)/$(APP_NAME).dmg
 	@mkdir -p $(DIST_DIR)/staging
 	@cp -R $(APP_BUNDLE) $(DIST_DIR)/staging/
+	@rm -rf $(DIST_DIR)/staging/$(APP_NAME).app/Contents/Resources/Models
+	@codesign --force --sign "$(CODESIGN_ID)" \
+	    --entitlements Resources/$(APP_NAME).entitlements \
+	    --timestamp=none \
+	    $(DIST_DIR)/staging/$(APP_NAME).app
 	@ln -s /Applications $(DIST_DIR)/staging/Applications
 	@cp README.md $(DIST_DIR)/staging/'먼저 읽어주세요.md'
 	@hdiutil create -quiet -volname "$(APP_NAME)" -srcfolder $(DIST_DIR)/staging \
 	    -ov -format UDZO $(DIST_DIR)/$(APP_NAME).dmg
 	@rm -rf $(DIST_DIR)/staging
-	@echo "==> $(DIST_DIR)/$(APP_NAME).dmg"
+	@echo "==> $(DIST_DIR)/$(APP_NAME).dmg (ArcFace 모델 미포함 — 라이선스상 재배포 불가)"
 	@echo "    주의: 공증 없음. 받는 쪽에서 xattr -dr com.apple.quarantine 필요"
 
 clean:

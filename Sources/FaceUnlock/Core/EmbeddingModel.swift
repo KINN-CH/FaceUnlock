@@ -16,7 +16,10 @@ final class EmbeddingModel {
         var errorDescription: String? {
             switch self {
             case .modelMissing:
-                return T("ArcFace 모델이 없습니다. tools/fetch_arcface.py 를 실행해 주세요.", "The ArcFace model is missing. Run tools/fetch_arcface.py.")
+                return T("ArcFace 모델이 없습니다. 저장소에서 make model 을 실행하거나, 변환된 "
+                         + "ArcFace.mlpackage 를 ~/Library/Application Support/FaceUnlock/Models/ 에 넣어 주세요.",
+                         "The ArcFace model is missing. Run `make model` in the repository, or place "
+                         + "the converted ArcFace.mlpackage in ~/Library/Application Support/FaceUnlock/Models/.")
             case .compileFailed(let m): return T("모델 컴파일 실패: \(m)", "Model compilation failed: \(m)")
             case .badOutput(let m):     return T("모델 출력이 예상과 다릅니다: \(m)", "Unexpected model output: \(m)")
             }
@@ -67,17 +70,27 @@ final class EmbeddingModel {
         let override = ProcessInfo.processInfo.environment["FACEUNLOCK_MODEL"].map {
             URL(fileURLWithPath: $0)
         }
+        // 탐색 순서: 환경변수(테스트) → 앱 번들(소스 빌드) → Application Support(DMG 배포).
+        // InsightFace 가중치는 비상업 연구용 라이선스라 DMG 에 동봉하지 않는다.
+        // DMG 사용자는 저장소에서 `make model` 로 변환한 .mlpackage 를
+        // ~/Library/Application Support/FaceUnlock/Models/ 에 넣어 쓴다.
+        let supportDir = try FileManager.default.url(for: .applicationSupportDirectory,
+                                                     in: .userDomainMask,
+                                                     appropriateFor: nil, create: true)
+            .appendingPathComponent("FaceUnlock", isDirectory: true)
+        let sideloaded = supportDir.appendingPathComponent("Models/ArcFace.mlpackage",
+                                                           isDirectory: true)
+
         guard let packaged = override ?? Bundle.main.url(forResource: "ArcFace",
                                              withExtension: "mlpackage",
                                              subdirectory: "Models")
-                ?? Bundle.main.url(forResource: "ArcFace", withExtension: "mlpackage") else {
+                ?? Bundle.main.url(forResource: "ArcFace", withExtension: "mlpackage")
+                ?? (FileManager.default.fileExists(atPath: sideloaded.path) ? sideloaded : nil)
+        else {
             throw LoadError.modelMissing
         }
 
-        let cacheDir = try FileManager.default.url(for: .applicationSupportDirectory,
-                                                   in: .userDomainMask,
-                                                   appropriateFor: nil, create: true)
-            .appendingPathComponent("FaceUnlock", isDirectory: true)
+        let cacheDir = supportDir
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         let cached = cacheDir.appendingPathComponent("ArcFace.mlmodelc", isDirectory: true)
 

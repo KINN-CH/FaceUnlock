@@ -69,8 +69,6 @@ final class AppState: ObservableObject {
     }
 
     @Published private(set) var status: Status = .disabled
-    /// 마지막 인증 시도의 유사도 점수. 임계값 튜닝용으로 설정 화면에 보여준다.
-    @Published private(set) var lastScore: Float?
 
     /// 권한 상태를 게시 속성으로 들고 있는 이유.
     ///
@@ -495,12 +493,8 @@ final class AppState: ObservableObject {
     private func apply(_ progress: AuthSession.Progress) {
         switch progress {
         case .searching:      status = .watching
-        case .faceDetected(let score):
-            lastScore = score
-            status = .watching
-        case .matching(let score):
-            lastScore = score
-            status = .matching
+        case .faceDetected:   status = .watching
+        case .matching:       status = .matching
         case .blinkChallenge: status = .blinkChallenge
         case .verifying:      status = .matching
         }

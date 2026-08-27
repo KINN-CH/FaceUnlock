@@ -42,6 +42,13 @@ final class AuthSession {
         /// "깜빡이세요" 를 띄울 수단이 없어서(잠금화면 오버레이는 macOS 가
         /// 가려버린다) 사용자가 언제 깜빡여야 하는지 모른 채 기다린다.
         var blinkTimeout: TimeInterval = 12
+        /// 임베딩(정렬 + CoreML) 사이의 최소 간격.
+        ///
+        /// 카메라는 깜빡임을 놓치지 않으려고 20fps 로 돌지만, 임베딩까지
+        /// 매 프레임 돌릴 이유는 없다 — 연속 3프레임 일치 판정에는 초당
+        /// 10회면 넉넉하고, CPU 는 절반으로 준다. 검출·깜빡임 감지는
+        /// 이 간격과 무관하게 매 프레임 돈다.
+        var minEmbedInterval: CFTimeInterval = 0.1
         /// 깜빡임 직후 재확인에 주는 시간.
         ///
         /// 한 프레임만 보고 판정하면 안 된다. 깜빡임이 끝난 직후는 눈꺼풀이 아직
@@ -73,6 +80,7 @@ final class AuthSession {
     private var consecutiveMatches = 0
     private var deadline: CFTimeInterval = 0
     private var lastProgress: String = ""
+    private var lastEmbedAt: CFTimeInterval = 0
 
     init(roster: FaceRoster, model: EmbeddingModel, config: Config) {
         self.roster = roster
@@ -123,6 +131,8 @@ final class AuthSession {
 
         switch phase {
         case .identifying:
+            guard now - lastEmbedAt >= config.minEmbedInterval else { return }
+            lastEmbedAt = now
             identify(face: face, in: pixelBuffer)
 
         case .awaitingBlink(let blinkDeadline):
@@ -139,6 +149,9 @@ final class AuthSession {
         case .verifyingAfterBlink(let verifyDeadline):
             // 눈 감긴 사이 얼굴이 바뀌었을 수 있으므로 한 번 더 확인한다.
             report(.verifying)
+
+            guard now - lastEmbedAt >= config.minEmbedInterval else { return }
+            lastEmbedAt = now
 
             if let result = embedAndMatch(face: face, in: pixelBuffer),
                result.passes(threshold: config.threshold) {
