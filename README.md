@@ -1,6 +1,6 @@
 <div align="center">
 
-# FaceUnlock
+<img src="docs/banner.png" alt="FaceUnlock — Macbook을 Face ID로 열수있는 앱" width="760">
 
 ### Macbook을 Face ID로 열수있는 앱
 ### (Touch ID 없는 맥북 유저가 직접 만든)
@@ -15,16 +15,29 @@ ArcFace 임베딩 · 눈 깜빡임 확인 · 비밀번호는 Secure Enclave에 �
 [![Release](https://img.shields.io/github/v/release/KINN-CH/FaceUnlock?color=brightgreen)](https://github.com/KINN-CH/FaceUnlock/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-`macbook-faceid` · `face-recognition` · `arcface` · `coreml` · `vision-framework`<br>
-`secure-enclave` · `swiftui` · `menu-bar-app` · `screen-unlock` · `macos`
+### [⬇︎ 최신 버전 내려받기 (DMG)](https://github.com/KINN-CH/FaceUnlock/releases/latest)
 
 **[한국어](#한국어) · [English](#english)**
+
+<sub>`macbook-faceid` · `face-recognition` · `arcface` · `coreml` · `vision-framework` · `secure-enclave` · `swiftui` · `menu-bar-app` · `screen-unlock` · `macos`</sub>
 
 </div>
 
 ---
 
 <a id="한국어"></a>
+
+<p align="center">
+  <a href="#시작하기-전에">시작하기 전에</a> ·
+  <a href="#설치">설치</a> ·
+  <a href="#처음-설정">처음 설정</a> ·
+  <a href="#동작-방식">동작 방식</a> ·
+  <a href="#조용히-틀리는-것들">조용히 틀리는 것들</a> ·
+  <a href="#알려진-문제">알려진 문제</a> ·
+  <a href="#개발">개발</a> ·
+  <a href="#모델">모델</a> ·
+  <a href="#라이선스">라이선스</a>
+</p>
 
 ## 시작하기 전에
 
@@ -280,6 +293,18 @@ make dmg          # 배포용 DMG
 ### English
 
 </div>
+
+<p align="center">
+  <a href="#before-you-turn-it-on">Before you turn it on</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#first-time-setup">First-time setup</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#the-things-that-fail-quietly">Fails quietly</a> ·
+  <a href="#known-problems">Known problems</a> ·
+  <a href="#development">Development</a> ·
+  <a href="#model">Model</a> ·
+  <a href="#license">License</a>
+</p>
 
 ## Before you turn it on
 
