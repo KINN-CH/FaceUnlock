@@ -386,6 +386,10 @@ final class AppState: ObservableObject {
         guard settings.faceUnlockEnabled else { return }
         guard opensWindowOnManualLock else {
             Log.app.info("잠김 — 화면이 다시 켜지면 인식을 시작합니다")
+            // 인식은 나중에 하더라도 **장치는 지금 열어둔다.** 이유는
+            // [warmCamera] 에 적어두었다. 이걸 빼면 잠금화면에서 새까만
+            // 프레임만 오고, 얼굴은 영영 한 개도 검출되지 않는다.
+            warmCamera()
             return
         }
         guard anyDisplayAwake() else {
@@ -449,7 +453,13 @@ final class AppState: ObservableObject {
         windowDeadline = nil
         retryTimer?.invalidate()
         retryTimer = nil
-        endSession()
+        // 아직 잠겨 있다면 장치를 놓지 않는다. 여기서 놓으면 다음 시도는
+        // 잠긴 상태에서의 냉시동이 되고, 그건 [warmCamera] 에 적어둔 대로
+        // 새까만 프레임을 뜻한다. 시간 초과나 화면 꺼짐으로 닫는 경우가
+        // 정확히 그 상황이다. (잠금이 풀려서 닫는 경우는
+        // [handleScreenUnlocked] 가 곧바로 놓는다.)
+        let keepsCamera = settings.faceUnlockEnabled && LockMonitor.screenIsLockedNow()
+        endSession(releaseCamera: !keepsCamera)
         AwakeWindow.release()
         Log.app.info("인식 창 닫힘 — \(reason, privacy: .public)")
         refreshStatus()
@@ -608,7 +618,42 @@ final class AppState: ObservableObject {
 
     private func handleScreenUnlocked() {
         closeWindow("잠금이 풀림")
+        // 창이 열린 적 없이 [warmCamera] 만 잡고 있었다면 `closeWindow` 가
+        // 곧바로 되돌아간다(`windowDeadline == nil`). 그 경우까지 확실히
+        // 놓아야 표시등이 켜진 채로 남지 않는다.
+        camera.stop(owner: self)
         refreshStatus()
+    }
+
+    /// 잠기는 **순간** 카메라 장치를 열어 잠금화면까지 끌고 간다. 인식은 하지
+    /// 않는다 — 프레임은 그냥 버린다.
+    ///
+    /// macOS 는 **잠긴 상태에서 카메라 장치를 처음 여는 경우 새까만 프레임을
+    /// 준다.** 오류도, 권한 거부도 아니다. `startRunning()` 은 성공하고
+    /// 초당 14장이 멀쩡히 도착하는데 내용만 전부 0이라, 코드 어디에서도
+    /// 고장으로 보이지 않는다. 실측(2026-08-28):
+    ///
+    ///   - 잠금 상태에서 세션을 새로 켠 3회 → 매초 `얼굴 0, 임베딩 0`
+    ///   - 별도 프로세스가 잠기기 **전부터** 장치를 열어둔 채 같은 코드를
+    ///     돌린 1회 → `얼굴 10, 최고 0.776` → 깜빡임 통과 → 잠금 해제 성공
+    ///
+    /// 즉 필요한 것은 세션이 아니라 **장치가 이미 스트리밍 중인 상태**다.
+    /// 잠긴 뒤에 껐다 켜면 다시 냉시동이라 소용없으므로, 잠금 경계를 넘겨
+    /// 계속 잡고 있는 것 말고는 방법이 없다.
+    ///
+    /// 대가는 잠겨 있는 동안 카메라 표시등이 켜져 있다는 것이다. 얼굴로
+    /// 잠금을 푸는 앱이 그 시간에 카메라를 보고 있는 건 숨길 일이 아니므로
+    /// 그대로 둔다. 기능을 끄면(`faceUnlockEnabled`) 켜지지 않는다.
+    private func warmCamera() {
+        // 권한이나 등록이 안 끝났으면 어차피 인식을 못 한다. 표시등만
+        // 켜놓는 꼴이 되므로 그때는 열지 않는다.
+        guard setupBlocker() == nil else { return }
+        Log.app.info("카메라를 미리 열어 잠금화면까지 유지합니다")
+        camera.start(owner: self,
+                     onFrame: { _ in },
+                     onFailure: { reason in
+                         Log.camera.error("미리 열기 실패: \(reason, privacy: .public)")
+                     })
     }
 
     /// 인증 시도를 끝낸다.

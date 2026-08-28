@@ -152,6 +152,14 @@ final class CameraSession: NSObject {
     private var healthTickStartedAt: CFTimeInterval = 0
     private var framesInHealthTick = 0
     private var brightnessSum = 0.0
+    /// **프레임은 정상 속도로 오는데 내용만 새까만** 상태를 세는 칸.
+    ///
+    /// 감시견은 프레임이 *끊겼을 때만* 장치를 다시 연다. 그런데 잠금화면에서
+    /// 냉시동한 세션은 초당 13~15장을 주면서 평균 밝기 0을 15초 내내 유지했다
+    /// — 감시견이 보기에는 완벽히 건강한 스트림이라 아무 일도 하지 않았고,
+    /// 사용자에게는 "그냥 안 된다" 로만 보였다. 최소한 말은 해야 한다.
+    private var blackTicks = 0
+    private let blackTickLimit = 4
 
     var isRunning: Bool { session.isRunning }
 
@@ -296,6 +304,7 @@ final class CameraSession: NSObject {
         healthTickStartedAt = CACurrentMediaTime()
         framesInHealthTick = 0
         brightnessSum = 0
+        blackTicks = 0
         startedAt = CACurrentMediaTime()
         frameLock.lock(); lastFrameAt = 0; frameLock.unlock()
         session.startRunning()
@@ -660,6 +669,14 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         healthTickStartedAt = now
         framesInHealthTick = 0
         brightnessSum = 0
+
+        // 화면이 자면 카메라도 자고 프레임도 까매진다. 그건 고장이 아니다.
+        guard Self.anyDisplayAwake(), mean == 0 else { blackTicks = 0; return }
+        blackTicks += 1
+        guard blackTicks == blackTickLimit else { return }
+        Log.camera.error("화면은 켜져 있는데 \(self.blackTickLimit)초째 새까만 프레임만 옵니다 — 잠긴 상태에서 카메라를 처음 연 경우입니다")
+        onFailure?(T("카메라가 검은 화면만 보내고 있습니다. 잠그기 전에 앱이 켜져 있었는지 확인해 주세요.",
+                     "The camera is only sending black frames. Check that the app was running before the screen locked."))
     }
 
     private static func meanBrightness(of buffer: CVPixelBuffer) -> Double {
