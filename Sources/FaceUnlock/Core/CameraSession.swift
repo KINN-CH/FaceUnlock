@@ -158,6 +158,16 @@ final class CameraSession: NSObject {
     /// 냉시동한 세션은 초당 13~15장을 주면서 평균 밝기 0을 15초 내내 유지했다
     /// — 감시견이 보기에는 완벽히 건강한 스트림이라 아무 일도 하지 않았고,
     /// 사용자에게는 "그냥 안 된다" 로만 보였다. 최소한 말은 해야 한다.
+    /// 진단 모드. `defaults write io.github.kinnch.FaceUnlock diagnostics -bool YES`
+    ///
+    /// 켜면 새까만 프레임을 만났을 때 바로 포기하지 않고, 60초 동안 매초
+    /// 장치·연결·세션 상태를 남기면서 5·15·30초에 장치를 다시 연다.
+    /// 짧은 간격(0.4초) 재개방은 이미 실패로 확인됐으므로 간격을 벌렸다.
+    static let diagnostics = UserDefaults.standard.bool(forKey: "diagnostics")
+
+    private var blackProbeStartedAt: CFTimeInterval = 0
+    private var blackProbeResets = 0
+
     private var blackTicks = 0
     private let blackTickLimit = 4
     private var failingOnBlackFrames = false
@@ -494,7 +504,8 @@ final class CameraSession: NSObject {
         // 이유 키(AVCaptureSessionInterruptionReasonKey)는 iOS 전용이라 여기서는
         // 못 쓴다. 그래도 "중단됐다" 는 사실만으로 우리 코드 문제인지
         // 시스템이 장치를 가져간 것인지 갈린다.
-        Log.camera.error("카메라 세션 중단됨 (\(Self.environmentSummary(), privacy: .public))")
+        let info = note.userInfo?.map { "\($0.key)=\($0.value)" }.joined(separator: " ") ?? "정보 없음"
+        Log.camera.error("카메라 세션 중단됨 (\(Self.environmentSummary(), privacy: .public)) userInfo: \(info, privacy: .public)")
     }
 
     @objc private func sessionInterruptionEnded(_ note: Notification) {
@@ -659,6 +670,11 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         framesInHealthTick = 0
         brightnessSum = 0
 
+        if Self.diagnostics, blackProbeStartedAt > 0 {
+            runBlackProbe(now: now, mean: mean)
+            return
+        }
+
         // 화면이 자면 카메라도 자고 프레임도 까매진다. 그건 고장이 아니다.
         guard Self.anyDisplayAwake(), mean == 0 else { blackTicks = 0; return }
         blackTicks += 1
@@ -672,11 +688,46 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         // 반복했다. 그래서 재개방하지 않고 한 번만 사실대로 남긴다.
         // 이 상태에 빠지지 않는 것이 유일한 대책이고, 그건 잠기기 전부터
         // 장치를 붙잡고 있는 것이다 — AppState.warmCamera 참조.
+        guard !Self.diagnostics else {
+            blackProbeStartedAt = now
+            blackProbeResets = 0
+            Log.camera.error("[진단] 새까만 프레임 확인 — 60초 동안 상태를 기록합니다")
+            dumpState(label: "검게 나온 직후")
+            return
+        }
         Log.camera.error("화면은 켜져 있는데 새까만 프레임만 옵니다 — 이번 잠금은 비밀번호로 열어야 합니다")
         // 기다려봐야 소용없다는 걸 아는데 20초 제한시간까지 세워둘 이유가
         // 없다. 바로 알리고 비밀번호로 넘긴다.
         onFailure?(T("카메라가 검은 화면만 보냅니다 — 비밀번호로 로그인하세요.",
                      "The camera is only sending black frames — log in with your password."))
+    }
+
+    /// 진단 모드에서 매초. 60초 동안 상태를 남기고 5·15·30초에 다시 연다.
+    private func runBlackProbe(now: CFTimeInterval, mean: Int) {
+        let elapsed = now - blackProbeStartedAt
+        guard elapsed <= 60 else { return }
+        dumpState(label: "+\(Int(elapsed))초 밝기 \(mean)")
+        // 간격을 크게 벌린 재개방. 0.4초 간격은 이미 실패로 확인됐다.
+        let schedule: [Double] = [5, 15, 30]
+        guard blackProbeResets < schedule.count,
+              elapsed >= schedule[blackProbeResets] else { return }
+        blackProbeResets += 1
+        Log.camera.error("[진단] \(Int(elapsed))초 경과 — 장치를 다시 엽니다")
+        resetAttempts = 0
+        hardReset()
+    }
+
+    /// 장치·연결·세션이 스스로 뭐라고 말하는지 그대로 받아 적는다.
+    private func dumpState(label: String) {
+        let device = activeDevice
+        let conn = output.connection(with: .video)
+        let dims = device.map { CMVideoFormatDescriptionGetDimensions($0.activeFormat.formatDescription) }
+        let state = "세션(돌아감=\(session.isRunning))"
+            + " 장치(연결됨=\(device?.isConnected ?? false) 중지됨=\(device?.isSuspended ?? false)"
+            + " 타앱사용=\(device?.isInUseByAnotherApplication ?? false)"
+            + " 포맷=\(dims?.width ?? 0)×\(dims?.height ?? 0))"
+            + " 연결(있음=\(conn != nil) 켜짐=\(conn?.isEnabled ?? false) 활성=\(conn?.isActive ?? false))"
+        Log.camera.error("[진단] \(label, privacy: .public) \(state, privacy: .public)")
     }
 
     private static func meanBrightness(of buffer: CVPixelBuffer) -> Double {

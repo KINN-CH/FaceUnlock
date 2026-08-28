@@ -463,6 +463,7 @@ final class AppState: ObservableObject {
         // 시도가 "화면만 껐다 켠 뒤의 냉시동" 이 되고, 그건 [handleScreensSlept]
         // 에 적어둔 대로 새까만 프레임을 뜻한다. 시스템이 자는 경우만
         // [handleSystemWillSleep] 이 따로 놓는다.
+        // 진단 모드에서는 창이 닫혀도 장치를 계속 돌려야 60초 관찰이 끝난다.
         let stillLocked = settings.faceUnlockEnabled && LockMonitor.screenIsLockedNow()
         endSession(releaseCamera: !stillLocked)
         AwakeWindow.release()
@@ -632,6 +633,13 @@ final class AppState: ObservableObject {
     /// 장치를 놓는다. 자리를 비우는 건 그쪽이고, 다시 열 때의 시동은 된다.
     private func handleScreensSlept() {
         closeWindow("화면이 꺼짐")
+        // 진단 모드에서는 목표 동작(화면이 꺼지면 장치도 끈다)을 그대로
+        // 재현해야 실패가 나온다. 우회책이 켜져 있으면 잴 것이 없다.
+        guard CameraSession.diagnostics else { return }
+        holdTimer?.invalidate()
+        holdTimer = nil
+        Log.app.info("[진단] 화면이 꺼져 카메라를 놓습니다")
+        camera.stop(owner: self)
     }
 
     /// 시스템이 잔다 (덮개를 닫았거나 절전에 들어간다) — 장치를 놓는다.
