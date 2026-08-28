@@ -49,8 +49,16 @@ INPUT_SHAPE = (1, 3, 112, 112)
 EMBED_DIM = 512
 
 
-def log(msg: str) -> None:
-    print(f"[fetch_arcface] {msg}", flush=True)
+def log(ko: str, en: str = "") -> None:
+    """한국어를 찍고, 영어가 있으면 바로 아래 줄에 나란히 찍는다.
+
+    이 스크립트의 출력은 DMG 설치 도우미 창에 그대로 흘러나온다. 모델 내려받기와
+    변환은 몇 분씩 걸리는 가장 긴 구간이라, 여기서 읽을 수 없는 글자만 지나가면
+    설치가 멈춘 줄 알고 창을 닫게 된다. 그래서 두 언어를 함께 찍는다.
+    """
+    print(f"[fetch_arcface] {ko}", flush=True)
+    if en:
+        print(f"                {en}", flush=True)
 
 
 def download_with_curl(url: str, tmp: Path) -> bool:
@@ -72,7 +80,8 @@ def download_with_curl(url: str, tmp: Path) -> bool:
          "--progress-bar", "-o", str(tmp), url]
     )
     if result.returncode != 0:
-        log(f"curl 실패 (코드 {result.returncode}) — urllib 로 다시 시도합니다")
+        log(f"curl 실패 (코드 {result.returncode}) — urllib 로 다시 시도합니다",
+            f"curl failed (code {result.returncode}) — retrying with urllib")
         tmp.unlink(missing_ok=True)
         return False
     return tmp.exists() and tmp.stat().st_size > 0
@@ -106,40 +115,49 @@ def download_with_urllib(url: str, tmp: Path) -> None:
             f"HTTPS 인증서 검증에 실패했습니다: {error}\n"
             "이 Python 이 시스템 인증서를 못 읽고 있습니다. python.org 에서 받은\n"
             "버전이라면 '/Applications/Python 3.x/Install Certificates.command' 를\n"
-            "한 번 실행한 뒤 다시 시도하거나, Homebrew 의 python@3.12 를 쓰세요."
+            "한 번 실행한 뒤 다시 시도하거나, Homebrew 의 python@3.12 를 쓰세요.\n"
+            "\n"
+            f"HTTPS certificate verification failed: {error}\n"
+            "This Python cannot read the system certificate store. If it came from\n"
+            "python.org, run '/Applications/Python 3.x/Install Certificates.command'\n"
+            "once and try again, or use Homebrew's python@3.12."
         ) from error
 
 
 def download(url: str, dest: Path) -> Path:
     if dest.exists() and dest.stat().st_size > 0:
-        log(f"캐시 사용: {dest} ({dest.stat().st_size / 1e6:.1f} MB)")
+        log(f"캐시 사용: {dest} ({dest.stat().st_size / 1e6:.1f} MB)",
+            f"Using cached file: {dest} ({dest.stat().st_size / 1e6:.1f} MB)")
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    log(f"내려받는 중: {url}")
+    log(f"내려받는 중: {url}", f"Downloading: {url}")
     tmp = dest.with_suffix(dest.suffix + ".part")
 
     if not download_with_curl(url, tmp):
         download_with_urllib(url, tmp)
 
     tmp.rename(dest)
-    log(f"완료: {dest} ({dest.stat().st_size / 1e6:.1f} MB)")
+    log(f"완료: {dest} ({dest.stat().st_size / 1e6:.1f} MB)",
+        f"Done: {dest} ({dest.stat().st_size / 1e6:.1f} MB)")
     return dest
 
 
 def extract_onnx(zip_path: Path) -> Path:
     onnx_path = CACHE / ONNX_MEMBER
     if onnx_path.exists():
-        log(f"캐시 사용: {onnx_path}")
+        log(f"캐시 사용: {onnx_path}", f"Using cached file: {onnx_path}")
         return onnx_path
     with zipfile.ZipFile(zip_path) as zf:
         member = next((n for n in zf.namelist() if n.endswith(ONNX_MEMBER)), None)
         if member is None:
-            raise SystemExit(f"{PACK_NAME} 안에서 {ONNX_MEMBER} 를 찾지 못했습니다: {zf.namelist()}")
-        log(f"압축 해제: {member}")
+            raise SystemExit(f"{PACK_NAME} 안에서 {ONNX_MEMBER} 를 찾지 못했습니다 / "
+                             f"{ONNX_MEMBER} not found inside {PACK_NAME}: {zf.namelist()}")
+        log(f"압축 해제: {member}", f"Extracting: {member}")
         with zf.open(member) as src, open(onnx_path, "wb") as dst:
             shutil.copyfileobj(src, dst)
     digest = hashlib.sha256(onnx_path.read_bytes()).hexdigest()[:16]
-    log(f"ONNX 준비됨 ({onnx_path.stat().st_size / 1e6:.1f} MB, sha256:{digest}…)")
+    log(f"ONNX 준비됨 ({onnx_path.stat().st_size / 1e6:.1f} MB, sha256:{digest}…)",
+        f"ONNX ready ({onnx_path.stat().st_size / 1e6:.1f} MB, sha256:{digest}…)")
     return onnx_path
 
 
@@ -163,7 +181,8 @@ def build_one(onnx_path: Path, precision_name: str, out_path: Path) -> float:
     with torch.no_grad():
         ref = model(example).detach().numpy().reshape(-1)
     if ref.shape[-1] != EMBED_DIM:
-        raise SystemExit(f"임베딩 차원이 {EMBED_DIM} 이 아닙니다: {ref.shape}")
+        raise SystemExit(f"임베딩 차원이 {EMBED_DIM} 이 아닙니다 / "
+                         f"embedding dimension is not {EMBED_DIM}: {ref.shape}")
 
     traced = torch.jit.trace(model, example, strict=False)
     precision = getattr(ct.precision, precision_name)
@@ -194,7 +213,8 @@ def build_in_subprocess(onnx_path: Path, precision_name: str) -> tuple[Path, flo
     import subprocess
 
     out_path = CACHE / f"ArcFace-{precision_name}.mlpackage"
-    log(f"CoreML 변환 중 ({precision_name})… 몇 분 걸릴 수 있습니다")
+    log(f"CoreML 변환 중 ({precision_name})… 몇 분 걸릴 수 있습니다",
+        f"Converting to CoreML ({precision_name})… this can take a few minutes")
 
     result = subprocess.run(
         [sys.executable, __file__, "--build", precision_name, str(onnx_path), str(out_path)],
@@ -205,11 +225,13 @@ def build_in_subprocess(onnx_path: Path, precision_name: str) -> tuple[Path, flo
     if line is None:
         sys.stderr.write(result.stdout[-2000:])
         sys.stderr.write(result.stderr[-2000:])
-        raise SystemExit(f"{precision_name} 변환 실패 (종료 코드 {result.returncode})")
+        raise SystemExit(f"{precision_name} 변환 실패 / conversion failed "
+                         f"(종료 코드 / exit code {result.returncode})")
 
     cos = float(line[len(marker):])
     angle = math.degrees(math.acos(min(1.0, cos)))
-    log(f"  {precision_name}: cos={cos:.6f}  (임베딩 편차 {angle:.2f}°)")
+    log(f"  {precision_name}: cos={cos:.6f}  (임베딩 편차 {angle:.2f}°)",
+        f"  {precision_name}: cos={cos:.6f}  (embedding deviation {angle:.2f}°)")
     return out_path, cos
 
 
@@ -221,9 +243,13 @@ def convert(onnx_path: Path) -> None:
     if cos32 < 0.9999:
         raise SystemExit(
             f"변환이 구조적으로 잘못되었습니다 (FLOAT32 cos={cos32:.6f}).\n"
-            "onnx2torch / coremltools 버전을 확인하세요."
+            "onnx2torch / coremltools 버전을 확인하세요.\n"
+            "\n"
+            f"The conversion is structurally wrong (FLOAT32 cos={cos32:.6f}).\n"
+            "Check your onnx2torch / coremltools versions."
         )
-    log("✅ 구조 검증 통과 — 변환된 그래프가 원본과 동일합니다")
+    log("✅ 구조 검증 통과 — 변환된 그래프가 원본과 동일합니다",
+        "✅ Structure verified — the converted graph matches the original")
 
     # 2단계 — FLOAT16 은 **얼마나 손해인지**만 본다.
     #   Apple Neural Engine 은 어차피 내부적으로 FP16 으로 돈다. 등록과 인증이 같은
@@ -233,15 +259,18 @@ def convert(onnx_path: Path) -> None:
     try:
         fp16_path, cos16 = build_in_subprocess(onnx_path, "FLOAT16")
     except SystemExit as exc:
-        log(f"FLOAT16 변환 실패 ({exc}) — FLOAT32 를 씁니다")
+        log(f"FLOAT16 변환 실패 ({exc}) — FLOAT32 를 씁니다",
+            f"FLOAT16 conversion failed ({exc}) — falling back to FLOAT32")
         fp16_path, cos16 = None, 0.0
 
     if fp16_path is not None and cos16 >= FP16_MIN:
         chosen, label = fp16_path, "FLOAT16"
-        log("FLOAT16 채택 — Neural Engine 에서 가장 빠르고 편차도 무시할 수준입니다")
+        log("FLOAT16 채택 — Neural Engine 에서 가장 빠르고 편차도 무시할 수준입니다",
+            "Using FLOAT16 — fastest on the Neural Engine, deviation is negligible")
     else:
         chosen, label = fp32_path, "FLOAT32"
-        log("FLOAT32 채택 — 정확하지만 FLOAT16 보다 느리고 큽니다")
+        log("FLOAT32 채택 — 정확하지만 FLOAT16 보다 느리고 큽니다",
+            "Using FLOAT32 — exact, but slower and larger than FLOAT16")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     if OUT.exists():
@@ -249,7 +278,8 @@ def convert(onnx_path: Path) -> None:
     shutil.copytree(chosen, OUT)
 
     size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
-    log(f"저장됨: {OUT} ({size / 1e6:.1f} MB, {label})")
+    log(f"저장됨: {OUT} ({size / 1e6:.1f} MB, {label})",
+        f"Saved: {OUT} ({size / 1e6:.1f} MB, {label})")
 
 
 def main() -> None:
@@ -265,7 +295,8 @@ def main() -> None:
     onnx_path = extract_onnx(zip_path)
     convert(onnx_path)
     print()
-    log("다음 단계: `make debug` 로 앱을 다시 빌드하면 모델이 번들에 포함됩니다.")
+    log("다음 단계: `make debug` 로 앱을 다시 빌드하면 모델이 번들에 포함됩니다.",
+        "Next: run `make debug` to rebuild the app with the model bundled.")
 
 
 if __name__ == "__main__":

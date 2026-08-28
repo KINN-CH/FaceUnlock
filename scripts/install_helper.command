@@ -10,7 +10,7 @@
 #      - Python 3.11/3.12 가 없으면 Homebrew 로 설치를 제안한다
 #   4) 앱 실행
 #
-# 메시지는 시스템 언어가 한국어면 한국어, 아니면 영어로 나온다.
+# 메시지는 한국어·영어를 함께 찍는다. 시스템 언어가 먼저 나온다.
 # DMG 에서는 '설치 도우미 (Install Helper).command' 라는 이름으로 들어간다.
 #
 # 주의: 공증이 없어서 이 파일을 열려면 우클릭 → 열기 → 시스템 설정의 '그래도 열기'
@@ -31,9 +31,18 @@ if defaults read -g AppleLanguages 2>/dev/null | sed -n 2p | grep -q '"ko'; then
 elif [ "${LANG:-}" != "${LANG#ko}" ]; then
     UILANG=ko
 fi
-say()  { if [ "$UILANG" = ko ]; then echo "$1"; else echo "$2"; fi; }
-step() { echo ""; if [ "$UILANG" = ko ]; then echo "==> $1"; else echo "==> $2"; fi; }
-fail() { if [ "$UILANG" = ko ]; then echo "오류: $1" >&2; else echo "Error: $2" >&2; fi; }
+
+# 안내는 **두 언어를 모두** 찍는다. 시스템 언어를 먼저, 나머지를 그다음 줄에.
+# 감지 하나에 기대지 않는 이유는 설치가 한 번뿐이기 때문이다 — 빗나가면
+# 사용자는 읽을 수 없는 안내만 보고 이 창을 닫는다. 줄 수가 두 배로 늘지만
+# 그 대가로 누가 열어도 읽을 수 있다.
+say()  { if [ "$UILANG" = ko ]; then echo "$1"; echo "$2"
+         else echo "$2"; echo "$1"; fi; }
+step() { echo ""
+         if [ "$UILANG" = ko ]; then echo "==> $1"; echo "    $2"
+         else echo "==> $2"; echo "    $1"; fi; }
+fail() { if [ "$UILANG" = ko ]; then echo "오류: $1" >&2; echo "Error: $2" >&2
+         else echo "Error: $2" >&2; echo "오류: $1" >&2; fi; }
 
 say "FaceUnlock 설치 도우미" "FaceUnlock Install Helper"
 echo "────────────────────────────────────────"
@@ -99,11 +108,7 @@ else
             echo ""
             say "    변환 도구가 Python 3.12 를 필요로 합니다 (설치되어 있지 않음)." \
                 "    The converter needs Python 3.12, which is not installed."
-            if [ "$UILANG" = ko ]; then
-                read -r -p "    Homebrew 로 지금 설치할까요? [Y/n] " reply
-            else
-                read -r -p "    Install it with Homebrew now? [Y/n] " reply
-            fi
+            read -r -p                 "    Homebrew 로 지금 설치할까요? / Install it with Homebrew now? [Y/n] " reply
             case "$reply" in
                 [nN]*) say "    설치를 중단합니다. python@3.12 설치 후 다시 실행해 주세요." \
                            "    Aborting. Install python@3.12 and run this again."
@@ -138,8 +143,8 @@ else
     "$WORK/.venv/bin/pip" install --quiet --upgrade pip
     "$WORK/.venv/bin/pip" install --quiet torch onnx onnx2torch coremltools numpy pillow
 
-    say "    모델 내려받기 + CoreML 변환 (진행 로그는 한국어로 나옵니다)" \
-        "    Downloading + converting the model (progress log below is in Korean)"
+    say "    모델 내려받기 + CoreML 변환" \
+        "    Downloading and converting the model"
     "$WORK/.venv/bin/python" "$WORK/tools/fetch_arcface.py"
 
     mkdir -p "$DEST"
