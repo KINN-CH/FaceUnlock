@@ -160,6 +160,7 @@ final class CameraSession: NSObject {
     /// 사용자에게는 "그냥 안 된다" 로만 보였다. 최소한 말은 해야 한다.
     private var blackTicks = 0
     private let blackTickLimit = 4
+    private var failingOnBlackFrames = false
 
     var isRunning: Bool { session.isRunning }
 
@@ -364,6 +365,18 @@ final class CameraSession: NSObject {
                     return
                 }
             } else if CACurrentMediaTime() - self.startedAt > self.firstFrameTimeout {
+                // 화면이 자는 동안 연 장치는 첫 프레임을 주지 않는다. 그건
+                // 고장이 아니다. 여기서 예산을 태우면 화면이 켜졌을 때
+                // 쓸 재개방이 남지 않는다 — 덮개 실측(16:16:01~09)에서
+                // 정확히 세 번을 다 쓰고 포기했다.
+                guard Self.anyDisplayAwake() else {
+                    if !self.reportedDisplaySleepStall {
+                        self.reportedDisplaySleepStall = true
+                        Log.camera.info("화면이 꺼져 있어 첫 프레임을 기다립니다 — 정상")
+                    }
+                    self.scheduleWatchdogTick(generation)
+                    return
+                }
                 Log.camera.error("시작 후 첫 프레임이 오지 않습니다 (\(Self.environmentSummary(), privacy: .public)) — 장치를 다시 엽니다")
                 self.hardReset()
                 return
@@ -381,8 +394,17 @@ final class CameraSession: NSObject {
         guard resetAttempts < maxResetAttempts else {
             Log.camera.error("장치를 다시 열지 못했습니다 — 포기")
             let failure = onFailure
+            let black = failingOnBlackFrames
+            failingOnBlackFrames = false
             stopOnQueue()
-            failure?(T("카메라가 응답하지 않습니다. 다른 앱이 카메라를 쓰고 있는지 확인해 주세요.", "The camera is not responding. Check whether another app is using it."))
+            // 원인이 다르면 안내도 달라야 한다. 검은 프레임을 두고
+            // "다른 앱이 쓰는 중" 이라고 하면 엉뚱한 데를 찾게 된다.
+            if black {
+                failure?(T("카메라가 검은 화면만 보내고 있습니다. 맥을 다시 시작하면 대부분 해결됩니다.",
+                           "The camera is only sending black frames. Restarting your Mac usually clears this."))
+            } else {
+                failure?(T("카메라가 응답하지 않습니다. 다른 앱이 카메라를 쓰고 있는지 확인해 주세요.", "The camera is not responding. Check whether another app is using it."))
+            }
             return
         }
         isResetting = true
@@ -638,6 +660,7 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         framesThisStart += 1
         if framesThisStart == usableBurstFrames {
             resetAttempts = 0
+            failingOnBlackFrames = false
             restartAttempts = 0
         }
 
@@ -673,10 +696,17 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         // 화면이 자면 카메라도 자고 프레임도 까매진다. 그건 고장이 아니다.
         guard Self.anyDisplayAwake(), mean == 0 else { blackTicks = 0; return }
         blackTicks += 1
-        guard blackTicks == blackTickLimit else { return }
-        Log.camera.error("화면은 켜져 있는데 \(self.blackTickLimit)초째 새까만 프레임만 옵니다 — 잠긴 상태에서 카메라를 처음 연 경우입니다")
-        onFailure?(T("카메라가 검은 화면만 보내고 있습니다. 잠그기 전에 앱이 켜져 있었는지 확인해 주세요.",
-                     "The camera is only sending black frames. Check that the app was running before the screen locked."))
+        guard blackTicks >= blackTickLimit else { return }
+        blackTicks = 0
+        guard !failingOnBlackFrames else { return }
+        failingOnBlackFrames = true
+        // 여기서 장치를 다시 열어봤다. 안 뚫린다 — 재개방 두 번을 하고도
+        // 밝기 0이 계속됐다(16:21:54, 16:21:58 실측). 게다가 검은 것도
+        // 프레임이라 복구 예산이 매번 0으로 되돌아가서 "1/3" 을 무한히
+        // 반복했다. 그래서 재개방하지 않고 한 번만 사실대로 남긴다.
+        // 이 상태에 빠지지 않는 것이 유일한 대책이고, 그건 잠기기 전부터
+        // 장치를 붙잡고 있는 것이다 — AppState.warmCamera 참조.
+        Log.camera.error("화면은 켜져 있는데 새까만 프레임만 옵니다 — 이번 잠금은 비밀번호로 열어야 합니다")
     }
 
     private static func meanBrightness(of buffer: CVPixelBuffer) -> Double {

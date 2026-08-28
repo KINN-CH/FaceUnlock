@@ -136,6 +136,8 @@ final class AppState: ObservableObject {
 
     /// 화면이 켜지는 순간.
     private var wakeObserver: NSObjectProtocol?
+    /// 잠긴 채 카메라를 붙잡고 있는 시간을 재는 타이머. [warmHoldLimit] 참조.
+    private var warmHoldTimer: Timer?
     /// 시스템 절전에서 깨어나는 순간.
     ///
     /// 덮개를 열 때 이 알림과 `screensDidWake` 중 어느 쪽이 먼저 올지는
@@ -189,7 +191,7 @@ final class AppState: ObservableObject {
             }
         sleepObserver = center.addObserver(
             forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.closeWindow("화면이 꺼짐") }
+                MainActor.assumeIsolated { self?.handleScreensSlept() }
             }
 
         settings.$faceUnlockEnabled
@@ -616,11 +618,33 @@ final class AppState: ObservableObject {
         openWindow("준비 완료")
     }
 
+    /// 화면이 꺼졌다 — 창만 닫고 **장치는 놓지 않는다.**
+    ///
+    /// 한 번은 여기서 놓아봤다. 화면이 꺼지면 프레임이 안 오니 붙잡을 이유가
+    /// 없어 보였고, 표시등과 배터리도 아깝다. 그런데 그렇게 하면 다시 켤 수가
+    /// 없다 — 화면만 껐다 켠 직후의 시동은 검은 프레임만 내놓고, 장치를 다시
+    /// 열어도(재개방 2회 실측) 돌아오지 않는다. 붙잡고 있는 것 말고는 방법이
+    /// 없다. 대신 [warmHoldLimit] 로 시간을 제한한다.
+    private func handleScreensSlept() {
+        closeWindow("화면이 꺼짐")
+    }
+
+    /// 유지 시간이 다 됐다. 인증이 진행 중이면 건드리지 않는다.
+    private func endWarmHold() {
+        warmHoldTimer?.invalidate()
+        warmHoldTimer = nil
+        guard session == nil, windowDeadline == nil else { return }
+        Log.app.info("잠긴 지 \(Int(self.warmHoldLimit / 60))분이 지나 카메라를 놓습니다 — 이후에는 비밀번호로 열어야 합니다")
+        camera.stop(owner: self)
+    }
+
     private func handleScreenUnlocked() {
         closeWindow("잠금이 풀림")
         // 창이 열린 적 없이 [warmCamera] 만 잡고 있었다면 `closeWindow` 가
         // 곧바로 되돌아간다(`windowDeadline == nil`). 그 경우까지 확실히
         // 놓아야 표시등이 켜진 채로 남지 않는다.
+        warmHoldTimer?.invalidate()
+        warmHoldTimer = nil
         camera.stop(owner: self)
         refreshStatus()
     }
@@ -644,11 +668,23 @@ final class AppState: ObservableObject {
     /// 대가는 잠겨 있는 동안 카메라 표시등이 켜져 있다는 것이다. 얼굴로
     /// 잠금을 푸는 앱이 그 시간에 카메라를 보고 있는 건 숨길 일이 아니므로
     /// 그대로 둔다. 기능을 끄면(`faceUnlockEnabled`) 켜지지 않는다.
+    /// 잠긴 채로 이 시간이 지나면 카메라를 놓는다.
+    ///
+    /// 붙잡고 있어야만 얼굴로 열리지만, 자리를 비운 몇 시간까지 켜둘 이유는
+    /// 없다. 이 시간을 넘긴 뒤에 돌아오면 비밀번호로 열어야 한다 — 배터리와
+    /// 맞바꾼 부분이고, 숨길 게 아니라 알고 쓰는 편이 낫다.
+    private let warmHoldLimit: TimeInterval = 10 * 60
+
     private func warmCamera() {
         // 권한이나 등록이 안 끝났으면 어차피 인식을 못 한다. 표시등만
         // 켜놓는 꼴이 되므로 그때는 열지 않는다.
         guard setupBlocker() == nil else { return }
         Log.app.info("카메라를 미리 열어 잠금화면까지 유지합니다")
+        warmHoldTimer?.invalidate()
+        warmHoldTimer = Timer.scheduledTimer(withTimeInterval: warmHoldLimit,
+                                             repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endWarmHold() }
+        }
         camera.start(owner: self,
                      onFrame: { _ in },
                      onFailure: { reason in
