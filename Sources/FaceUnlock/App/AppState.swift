@@ -146,8 +146,8 @@ final class AppState: ObservableObject {
     /// 예전에는 이 알림을 안 듣고 2초마다 디스플레이 상태를 물어봤다.
     private var sleepObserver: NSObjectProtocol?
     private var systemSleepObserver: NSObjectProtocol?
-    /// 잠긴 채 카메라를 붙잡는 시간을 재는 타이머. [holdLimit] 참조.
-    private var holdTimer: Timer?
+    /// 예열을 끊는 타이머. [primeLimit] 참조.
+    private var primeTimer: Timer?
 
     /// 이번 시도를 시작한 시각. 카메라 감시용.
     private var attemptStartedAt: CFTimeInterval?
@@ -394,8 +394,8 @@ final class AppState: ObservableObject {
         guard opensWindowOnManualLock else {
             Log.app.info("잠김 — 화면이 다시 켜지면 인식을 시작합니다")
             // 인식은 화면이 켜질 때 하더라도 **장치는 지금 연다.** 이유는
-            // [holdCamera] 에 적어두었다.
-            holdCamera()
+            // [primeCamera] 에 적어두었다.
+            primeCamera()
             return
         }
         guard anyDisplayAwake() else {
@@ -461,13 +461,7 @@ final class AppState: ObservableObject {
         windowDeadline = nil
         retryTimer?.invalidate()
         retryTimer = nil
-        // 아직 잠겨 있다면 장치를 계속 쥐고 있는다. 여기서 놓으면 다음
-        // 시도가 "화면만 껐다 켠 뒤의 냉시동" 이 되고, 그건 [handleScreensSlept]
-        // 에 적어둔 대로 새까만 프레임을 뜻한다. 시스템이 자는 경우만
-        // [handleSystemWillSleep] 이 따로 놓는다.
-        // 진단 모드에서는 창이 닫혀도 장치를 계속 돌려야 60초 관찰이 끝난다.
-        let stillLocked = settings.faceUnlockEnabled && LockMonitor.screenIsLockedNow()
-        endSession(releaseCamera: !stillLocked)
+        endSession(releaseCamera: true)
         // 진단 중에는 놓지 않는다. 인증은 20초에 시간 초과로 끝나지만
         // 관찰은 60초까지 이어져야 하고, 시한이 알아서 놓아준다.
         if !CameraSession.diagnostics { AwakeWindow.release() }
@@ -626,24 +620,16 @@ final class AppState: ObservableObject {
         openWindow("준비 완료")
     }
 
-    /// 화면만 꺼졌다 — 창은 닫되 **장치는 놓지 않는다.**
+    /// 화면이 꺼졌다 — 창을 닫고 **장치도 놓는다.** 목표 동작이 이것이다.
     ///
-    /// 이 상태에서 놓으면 다시 열 수가 없다. 화면만 껐다 켠 직후의 시동은
-    /// 프레임을 초당 13장 정상 속도로 내놓으면서 전 픽셀이 0이다. 5회 시도
-    /// 전부 그랬고(15:40, 15:41, 16:21, 16:37, 16:38), 장치를 통째로 다시
-    /// 열어도, 포맷을 시스템 기본값(1920×1080 @30fps)으로 되돌려도 같았다.
-    ///
-    /// 덮개를 닫는 경우는 다르다 — 그건 [handleSystemWillSleep] 이 맡아서
-    /// 장치를 놓는다. 자리를 비우는 건 그쪽이고, 다시 열 때의 시동은 된다.
+    /// 화면이 꺼져 있는 동안 카메라가 돌면 안 되고, 표시등도 꺼져야 한다.
+    /// 여기서 놓아도 다음 시동이 되는 이유는 [primeCamera] 에 적어두었다.
     private func handleScreensSlept() {
         closeWindow("화면이 꺼짐")
-        // 진단 모드에서는 목표 동작(화면이 꺼지면 장치도 끈다)을 그대로
-        // 재현해야 실패가 나온다. 우회책이 켜져 있으면 잴 것이 없다.
-        guard CameraSession.diagnostics else { return }
-        holdTimer?.invalidate()
-        holdTimer = nil
-        Log.app.info("[진단] 화면이 꺼져 카메라를 놓습니다")
+        primeTimer?.invalidate()
+        primeTimer = nil
         camera.stop(owner: self)
+        Log.app.info("화면이 꺼져 카메라를 놓습니다")
     }
 
     /// 시스템이 잔다 (덮개를 닫았거나 절전에 들어간다) — 장치를 놓는다.
@@ -653,57 +639,54 @@ final class AppState: ObservableObject {
     /// 그때의 냉시동은 실제로 성공한다(16:16:16 — 얼굴 일치 → 잠금 해제).
     private func handleSystemWillSleep() {
         closeWindow("시스템 절전")
-        holdTimer?.invalidate()
-        holdTimer = nil
+        primeTimer?.invalidate()
+        primeTimer = nil
         camera.stop(owner: self)
         Log.app.info("시스템이 자므로 카메라를 놓습니다")
     }
 
     private func handleScreenUnlocked() {
         closeWindow("잠금이 풀림")
-        holdTimer?.invalidate()
-        holdTimer = nil
-        // 창이 열린 적 없이 [holdCamera] 만 쥐고 있었다면 `closeWindow` 가
+        primeTimer?.invalidate()
+        primeTimer = nil
+        // 창이 열린 적 없이 [primeCamera] 만 돌고 있었다면 `closeWindow` 가
         // 곧바로 되돌아간다(`windowDeadline == nil`). 그 경우까지 확실히
         // 놓아야 표시등이 켜진 채로 남지 않는다.
         camera.stop(owner: self)
         refreshStatus()
     }
 
-    /// 잠기는 **순간** 장치를 열어 잠금화면까지 끌고 간다. 인식은 하지 않고
-    /// 프레임은 버린다. 필요한 것은 세션이 아니라 **이미 스트리밍 중인 장치**다.
+    /// 잠기는 **순간** 장치를 몇 초 돌려놓는다(예열). 인식은 하지 않고
+    /// 프레임은 버린다. 화면이 꺼지면 [handleScreensSlept] 가 곧 놓는다.
     ///
-    /// 이 시점의 시동은 된다(16:14:52 — 밝기 126). 안 되는 건 화면이 꺼졌다
-    /// 켜진 뒤의 시동뿐이라, 그 구간을 넘기려면 미리 열어두는 수밖에 없다.
+    /// **왜 필요한가.** 화면만 껐다 켠 직후의 냉시동은 프레임을 초당 13장
+    /// 정상 속도로 내놓으면서 전 픽셀이 0이다. 5회 시도 전부 그랬다
+    /// (15:40, 15:41, 16:21, 16:37, 16:38). 장치를 통째로 다시 열어도,
+    /// 포맷을 시스템 기본값(1920×1080 @30fps)으로 되돌려도 같았다.
     ///
-    /// 대가는 덮개가 열린 채 잠겨 있는 동안 표시등이 켜져 있다는 것이다.
-    /// 덮고 나가면 [handleSystemWillSleep] 이 놓으므로, 자리를 비우는 동안
-    /// 카메라가 도는 일은 없다.
-    /// 덮개를 연 채 잠긴 상태에서 카메라를 붙잡는 시간의 상한.
+    /// 그런데 **잠길 때 한 번 스트리밍해두면**, 같은 잠금 세션 안에서는
+    /// 껐다 켜도 정상으로 나온다(17:30, 17:33 — 둘 다 얼굴 일치 → 해제).
+    /// 예열 없이 같은 절차를 밟은 5회는 전부 검은 프레임이었다. 이 둘의
+    /// 차이는 잠금 직후의 5초짜리 스트리밍 하나뿐이다.
     ///
-    /// 무기한 붙잡으면 안 된다. 카메라가 도는 동안 맥이 **유휴 절전에 들지
-    /// 못한다** — 잠그고 12분을 두었는데 끝까지 깨어 있었다(17:08~17:20
-    /// 실측). 카메라 전력에 시스템이 안 자는 전력까지 얹힌다.
+    /// 그래서 표시등은 잠긴 직후 몇 초만 켜졌다 꺼지고, 화면이 꺼져 있는
+    /// 동안에는 꺼져 있으며, 맥도 평소대로 절전에 들어간다
+    /// (돌아가는 캡처 세션은 시스템 유휴 절전을 막는다 — 실측 12분).
+    /// 예열을 끊는 상한. 보통은 이 시간 전에 화면이 꺼지면서 놓는다.
     ///
-    /// 이 시간이 지나면 놓는다. 그러면 맥이 곧(`pmset sleep` 설정, 여기서는
-    /// 1분) 절전에 들고, 그 뒤에 돌아오면 시스템 절전 복귀 = 냉시동이
-    /// **되는** 경우라 얼굴로 열린다.
-    ///
-    /// 대가는 그 사이의 틈이다. 놓은 뒤부터 맥이 잠들기 전까지(약 1분)
-    /// 돌아오시면 냉시동이 실패해 비밀번호로 열어야 한다. 이 틈을 없애려면
-    /// 놓으면서 `pmset sleepnow` 로 맥을 재우면 되는데, 사용자가 시키지
-    /// 않은 일이라 하지 않는다.
-    private let holdLimit: TimeInterval = 3 * 60
+    /// 잠근 뒤 화면이 꺼지기까지 실측 5~6초라 이 값에 닿는 일은 드물다.
+    /// 잠근 채 마우스를 계속 만져 화면이 안 꺼지는 경우를 위한 안전장치다.
+    private let primeLimit: TimeInterval = 30
 
-    private func holdCamera() {
+    private func primeCamera() {
         // 권한이나 등록이 안 끝났으면 어차피 인식을 못 한다. 표시등만 켜는
         // 꼴이 되므로 그때는 열지 않는다.
         guard setupBlocker() == nil else { return }
-        Log.app.info("카메라를 미리 열어 잠금화면까지 유지합니다")
-        holdTimer?.invalidate()
-        holdTimer = Timer.scheduledTimer(withTimeInterval: holdLimit,
-                                         repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.endHold() }
+        Log.app.info("카메라를 잠깐 열어 예열합니다")
+        primeTimer?.invalidate()
+        primeTimer = Timer.scheduledTimer(withTimeInterval: primeLimit,
+                                          repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endPrime() }
         }
         camera.start(owner: self,
                      onFrame: { _ in },
@@ -712,12 +695,12 @@ final class AppState: ObservableObject {
                      })
     }
 
-    /// 붙잡는 시간이 다 됐다. 인증 중이면 건드리지 않는다.
-    private func endHold() {
-        holdTimer?.invalidate()
-        holdTimer = nil
+    /// 예열 상한에 닿았다. 인증 중이면 건드리지 않는다.
+    private func endPrime() {
+        primeTimer?.invalidate()
+        primeTimer = nil
         guard session == nil, windowDeadline == nil else { return }
-        Log.app.info("\(Int(self.holdLimit / 60))분이 지나 카메라를 놓습니다 — 맥이 잠든 뒤에 깨우면 얼굴로 열립니다")
+        Log.app.info("예열을 마치고 카메라를 놓습니다")
         camera.stop(owner: self)
     }
 
