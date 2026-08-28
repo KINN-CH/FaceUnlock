@@ -145,6 +145,7 @@ final class AppState: ObservableObject {
     /// 화면이 꺼지는 순간 — 창을 닫는 신호.
     /// 예전에는 이 알림을 안 듣고 2초마다 디스플레이 상태를 물어봤다.
     private var sleepObserver: NSObjectProtocol?
+    private var systemSleepObserver: NSObjectProtocol?
 
     /// 이번 시도를 시작한 시각. 카메라 감시용.
     private var attemptStartedAt: CFTimeInterval?
@@ -190,6 +191,10 @@ final class AppState: ObservableObject {
         sleepObserver = center.addObserver(
             forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.handleScreensSlept() }
+            }
+        systemSleepObserver = center.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleSystemWillSleep() }
             }
 
         settings.$faceUnlockEnabled
@@ -386,6 +391,9 @@ final class AppState: ObservableObject {
         guard settings.faceUnlockEnabled else { return }
         guard opensWindowOnManualLock else {
             Log.app.info("잠김 — 화면이 다시 켜지면 인식을 시작합니다")
+            // 인식은 화면이 켜질 때 하더라도 **장치는 지금 연다.** 이유는
+            // [holdCamera] 에 적어두었다.
+            holdCamera()
             return
         }
         guard anyDisplayAwake() else {
@@ -449,7 +457,12 @@ final class AppState: ObservableObject {
         windowDeadline = nil
         retryTimer?.invalidate()
         retryTimer = nil
-        endSession(releaseCamera: true)
+        // 아직 잠겨 있다면 장치를 계속 쥐고 있는다. 여기서 놓으면 다음
+        // 시도가 "화면만 껐다 켠 뒤의 냉시동" 이 되고, 그건 [handleScreensSlept]
+        // 에 적어둔 대로 새까만 프레임을 뜻한다. 시스템이 자는 경우만
+        // [handleSystemWillSleep] 이 따로 놓는다.
+        let stillLocked = settings.faceUnlockEnabled && LockMonitor.screenIsLockedNow()
+        endSession(releaseCamera: !stillLocked)
         AwakeWindow.release()
         Log.app.info("인식 창 닫힘 — \(reason, privacy: .public)")
         refreshStatus()
@@ -606,21 +619,58 @@ final class AppState: ObservableObject {
         openWindow("준비 완료")
     }
 
-    /// 화면이 꺼졌다 — 창을 닫고 카메라를 놓는다.
+    /// 화면만 꺼졌다 — 창은 닫되 **장치는 놓지 않는다.**
     ///
-    /// 화면이 꺼져 있는 동안에는 프레임이 한 장도 오지 않으므로, 붙잡고
-    /// 있어봐야 표시등과 배터리만 쓴다. 카메라가 사는 시점은 딱 둘 —
-    /// 덮개를 연 직후와, 잠긴 채 화면을 깨운 직후다. 둘 다 [handleWakeEvent]
-    /// 가 맡는다.
+    /// 이 상태에서 놓으면 다시 열 수가 없다. 화면만 껐다 켠 직후의 시동은
+    /// 프레임을 초당 13장 정상 속도로 내놓으면서 전 픽셀이 0이다. 5회 시도
+    /// 전부 그랬고(15:40, 15:41, 16:21, 16:37, 16:38), 장치를 통째로 다시
+    /// 열어도, 포맷을 시스템 기본값(1920×1080 @30fps)으로 되돌려도 같았다.
+    ///
+    /// 덮개를 닫는 경우는 다르다 — 그건 [handleSystemWillSleep] 이 맡아서
+    /// 장치를 놓는다. 자리를 비우는 건 그쪽이고, 다시 열 때의 시동은 된다.
     private func handleScreensSlept() {
         closeWindow("화면이 꺼짐")
+    }
+
+    /// 시스템이 잔다 (덮개를 닫았거나 절전에 들어간다) — 장치를 놓는다.
+    ///
+    /// 맥북을 덮어 들고 나가는 경우가 정확히 이것이다. 여기서는 놓아도
+    /// 안전하다. 덮개를 열면 시스템이 통째로 깨면서 카메라도 재초기화되고,
+    /// 그때의 냉시동은 실제로 성공한다(16:16:16 — 얼굴 일치 → 잠금 해제).
+    private func handleSystemWillSleep() {
+        closeWindow("시스템 절전")
         camera.stop(owner: self)
+        Log.app.info("시스템이 자므로 카메라를 놓습니다")
     }
 
     private func handleScreenUnlocked() {
         closeWindow("잠금이 풀림")
+        // 창이 열린 적 없이 [holdCamera] 만 쥐고 있었다면 `closeWindow` 가
+        // 곧바로 되돌아간다(`windowDeadline == nil`). 그 경우까지 확실히
+        // 놓아야 표시등이 켜진 채로 남지 않는다.
         camera.stop(owner: self)
         refreshStatus()
+    }
+
+    /// 잠기는 **순간** 장치를 열어 잠금화면까지 끌고 간다. 인식은 하지 않고
+    /// 프레임은 버린다. 필요한 것은 세션이 아니라 **이미 스트리밍 중인 장치**다.
+    ///
+    /// 이 시점의 시동은 된다(16:14:52 — 밝기 126). 안 되는 건 화면이 꺼졌다
+    /// 켜진 뒤의 시동뿐이라, 그 구간을 넘기려면 미리 열어두는 수밖에 없다.
+    ///
+    /// 대가는 덮개가 열린 채 잠겨 있는 동안 표시등이 켜져 있다는 것이다.
+    /// 덮고 나가면 [handleSystemWillSleep] 이 놓으므로, 자리를 비우는 동안
+    /// 카메라가 도는 일은 없다.
+    private func holdCamera() {
+        // 권한이나 등록이 안 끝났으면 어차피 인식을 못 한다. 표시등만 켜는
+        // 꼴이 되므로 그때는 열지 않는다.
+        guard setupBlocker() == nil else { return }
+        Log.app.info("카메라를 미리 열어 잠금화면까지 유지합니다")
+        camera.start(owner: self,
+                     onFrame: { _ in },
+                     onFailure: { reason in
+                         Log.camera.error("미리 열기 실패: \(reason, privacy: .public)")
+                     })
     }
 
     /// 인증 시도를 끝낸다.
