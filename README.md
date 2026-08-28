@@ -256,6 +256,13 @@ security delete-generic-password -s io.github.kinnch.FaceUnlock   # 항목 수�
 
 ## 알려진 문제
 
+**잠겨 있는 동안 카메라 표시등이 켜져 있습니다.** macOS 는 잠긴 상태에서
+카메라를 *처음* 여는 경우 오류 없이 새까만 프레임만 돌려줍니다. 프레임은 초당
+15장씩 멀쩡히 오고 내용만 전부 0이라, 앱 입장에서는 정상 스트림과 구분되지
+않습니다. 그래서 잠기는 순간 카메라를 열어 잠금화면까지 그대로 끌고 갑니다 —
+장치가 이미 스트리밍 중이어야 실제 영상이 나오기 때문입니다. 잠긴 뒤에 껐다
+켜는 것으로는 해결되지 않습니다. 얼굴 잠금 해제를 끄면 켜지지 않습니다.
+
 **새 버전을 처음 실행하면 30초쯤 멈춥니다.** 키체인 확인 창이 뜨는데, 여기서
 '항상 허용'을 누르면 그 뒤로는 즉시 뜹니다. 키체인 항목의 접근 허용 목록이
 앱의 cdhash로 적히기 때문에 빌드가 바뀔 때마다 한 번씩 다시 물어봅니다. Team
@@ -572,6 +579,15 @@ conversion `cos = 1.000000` in FP32 and `0.9976` (3.95°) in FP16. The match
 threshold of 0.48 is about 61° in angle, so that much drift is irrelevant.
 
 ## Known problems
+
+**The camera indicator light stays on while the screen is locked.** When the
+camera is opened for the *first* time inside a locked session, macOS returns
+all-black frames and reports no error — they arrive at a healthy 15 fps with
+every pixel at zero, indistinguishable from a working stream. So the app opens
+the camera the moment the screen locks and holds it across the lock: the device
+has to already be streaming for real frames to arrive, and stopping and
+restarting it after the lock does not help. Turning face unlock off keeps it
+closed.
 
 **The first launch of a new build stalls for about 30 seconds.** A Keychain
 prompt appears; choose "Always Allow" and it's instant from then on. The access
