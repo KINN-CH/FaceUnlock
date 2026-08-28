@@ -319,9 +319,9 @@ final class CameraSession: NSObject {
             return
         }
         Log.camera.info("카메라 세션 시작")
-        // **세션이 돈 뒤에** 포맷을 고정한다. 순서가 왜 중요한지는
-        // [applyLightestFormat] 주석에 적어두었다.
-        if let activeDevice { Self.applyLightestFormat(to: activeDevice) }
+        // 포맷은 건드리지 않는다 — 시스템 기본값(1920×1080)으로 둔다.
+        // 이유는 [logActiveFormat] 주석 참조.
+        if let activeDevice { Self.logActiveFormat(of: activeDevice) }
         startWatchdog()
     }
 
@@ -566,65 +566,31 @@ final class CameraSession: NSObject {
         return true
     }
 
-    /// 장치를 **가장 가벼운 포맷**으로 고정한다.
+    /// 활성 포맷을 로그로 남기기만 한다. **바꾸지 않는다.**
     ///
-    /// 예전에는 `sessionPreset = .vga640x480` 만 지정했다. 그런데 이 맥북의
-    /// 내장 카메라에는 640×480 포맷이 아예 없다 (제일 작은 게 1280×720).
-    /// 그러면 macOS 는 카메라를 **1920×1080 24fps** 로 돌리고 스케일러를
-    /// 붙여 640×480 을 만들어 준다 — 우리가 쓰지도 않는 화소를 ISP 가
-    /// 만들어내고, 그 위에 시스템의 시간축 잡음 필터(MLVNR/MCTF)까지 얹힌다.
+    /// 한때 여기서 가장 가벼운 포맷(1280×720 @20fps)으로 고정했다. 이유는
+    /// 이랬다 — 이 맥북에는 640×480 포맷이 없어서 `.vga640x480` 프리셋을
+    /// 주면 macOS 가 1920×1080 24fps 로 돌리고 스케일러를 붙인다. 그 위에
+    /// 시스템 시간축 잡음 필터(MLVNR/MCTF)가 얹히는데, 잠금화면에서 그게
+    /// 프레임마다 `-6689` 로 실패하며 입력 버퍼를 통째로 삼켰다. 화소를
+    /// 줄이면 필터가 처리할 양이 줄어 증상이 사라졌다.
     ///
-    /// 잠금화면에서 바로 이 필터가 프레임마다 `-6689` 로 실패하면서 **입력
-    /// 버퍼를 통째로 삼켰다.** 카메라는 24fps 로 멀쩡히 돌고 있는데 앱에는
-    /// 한 장도 오지 않는 상태 — "잠금화면에서 해제가 안 된다" 가 이것이었다.
-    /// (잠금 3초 동안 오류 37건, 잠금 해제 5초 동안 0건으로 확인했다.)
+    /// 그런데 고정한 뒤로 **다른 증상**이 나타났다. 화면만 껐다 켠 직후에
+    /// 장치를 열면 프레임은 초당 13~15장 정상으로 오는데 전 픽셀이 0이다
+    /// (2026-08-28 16:21:49~58 실측). 장치를 통째로 다시 열어도 안 뚫린다.
     ///
-    /// 필터는 시스템 데몬 안에 있어 끌 수 없다. macOS 에서 켜고 끌 수 있는
-    /// 효과는 센터 스테이지뿐이고 나머지는 읽기 전용이다. 그래서 우리가 쥔
-    /// 손잡이는 **필터가 처리할 양** 하나뿐이다. 1280×720 20fps 는
-    /// 1920×1080 24fps 의 1/2.7 이다. 덤으로 스케일러가 빠지고 전력도 준다.
+    /// 결정적인 대조군: 같은 카메라를 **기본 포맷 그대로** 쓰는 별도
+    /// 프로세스(CamProbe)는 잠금 전·잠금 중·잠금 경계를 넘나들며 단 한 번도
+    /// 검게 나온 적이 없다(밝기 125, 24~25fps). 두 코드의 남은 차이가
+    /// 포맷 고정 하나뿐이라 그것을 뺀다.
     ///
-    /// 20fps 인 이유: 분석도 20fps 로 솎으므로 남는 프레임을 안 만들고,
-    /// 가장 짧은 깜빡임(실측 105ms)도 두 장쯤 잡힌다. 15fps 로 더 내리면
-    /// 그 깜빡임이 한 장에 걸칠 수 있어 [minimumFrameInterval] 의 근거가
-    /// 무너진다.
-    ///
-    /// ── **`startRunning()` 뒤에 불러야 한다** ────────────────────────────
-    /// 세션 프리셋이 `.high` 로 남아 있으면 `commitConfiguration()` 이
-    /// activeFormat 을 도로 1920×1080 으로 돌려놓는다. 프리셋을
-    /// InputPriority 로 바꾸면 세션이 양보하지만, macOS 에서는
-    /// `canSetSessionPreset` 이 그 프리셋에 false 를 준다 — 실제로 확인했다.
-    ///
-    /// 반면 **세션이 이미 돌고 있을 때 지정하면 그대로 남는다.** 로그로
-    /// 확인한 순서는 이랬다:
-    ///   구성 중 지정 → 커밋 후 1920×1080 (되돌아감)
-    ///   시작 후 지정 → 1280×720, 실제 프레임도 1280×720 (유지됨)
-    /// 그래서 [startOnQueue] 가 세션을 켠 다음에 이걸 부른다.
-    private static func applyLightestFormat(to device: AVCaptureDevice) {
-        guard let format = device.formats.min(by: { pixelCount(of: $0) < pixelCount(of: $1) }),
-              (try? device.lockForConfiguration()) != nil else {
-            Log.camera.info("포맷을 고정하지 못했습니다 — 시스템 기본값으로 진행합니다")
-            return
-        }
-        defer { device.unlockForConfiguration() }
-
-        device.activeFormat = format
-        // 원하는 20fps 가 이 포맷의 지원 범위 밖일 수 있다. 범위 안으로 접는다.
-        let ranges = format.videoSupportedFrameRateRanges
-        let lowest = ranges.map(\.minFrameRate).min() ?? 20
-        let highest = ranges.map(\.maxFrameRate).max() ?? 20
-        let fps = min(max(20, lowest), highest)
-        let duration = CMTime(value: 1, timescale: CMTimeScale(fps.rounded()))
-        device.activeVideoMinFrameDuration = duration
-        device.activeVideoMaxFrameDuration = duration
-
-        let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-        Log.camera.info("포맷 고정: \(size.width)×\(size.height) @\(Int(fps.rounded()))fps")
-    }
-
-    private static func pixelCount(of format: AVCaptureDevice.Format) -> Int32 {
-        let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-        return size.width * size.height
+    /// **되돌리기 전에 확인할 것**: 이걸 다시 켜서 해결하려는 증상이
+    /// "프레임이 아예 안 온다" 인지 "프레임은 오는데 새까맣다" 인지 보라.
+    /// 둘은 원인이 다르고, 포맷 고정은 앞의 것만 고친다.
+    private static func logActiveFormat(of device: AVCaptureDevice) {
+        let size = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+        let fps = Int((1.0 / CMTimeGetSeconds(device.activeVideoMinFrameDuration)).rounded())
+        Log.camera.info("활성 포맷: \(size.width)×\(size.height) @\(fps)fps (시스템 기본값)")
     }
 
     private static func preferredDevice() -> AVCaptureDevice? {

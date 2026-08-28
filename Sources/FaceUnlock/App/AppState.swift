@@ -136,8 +136,6 @@ final class AppState: ObservableObject {
 
     /// 화면이 켜지는 순간.
     private var wakeObserver: NSObjectProtocol?
-    /// 잠긴 채 카메라를 붙잡고 있는 시간을 재는 타이머. [warmHoldLimit] 참조.
-    private var warmHoldTimer: Timer?
     /// 시스템 절전에서 깨어나는 순간.
     ///
     /// 덮개를 열 때 이 알림과 `screensDidWake` 중 어느 쪽이 먼저 올지는
@@ -388,10 +386,6 @@ final class AppState: ObservableObject {
         guard settings.faceUnlockEnabled else { return }
         guard opensWindowOnManualLock else {
             Log.app.info("잠김 — 화면이 다시 켜지면 인식을 시작합니다")
-            // 인식은 나중에 하더라도 **장치는 지금 열어둔다.** 이유는
-            // [warmCamera] 에 적어두었다. 이걸 빼면 잠금화면에서 새까만
-            // 프레임만 오고, 얼굴은 영영 한 개도 검출되지 않는다.
-            warmCamera()
             return
         }
         guard anyDisplayAwake() else {
@@ -455,13 +449,7 @@ final class AppState: ObservableObject {
         windowDeadline = nil
         retryTimer?.invalidate()
         retryTimer = nil
-        // 아직 잠겨 있다면 장치를 놓지 않는다. 여기서 놓으면 다음 시도는
-        // 잠긴 상태에서의 냉시동이 되고, 그건 [warmCamera] 에 적어둔 대로
-        // 새까만 프레임을 뜻한다. 시간 초과나 화면 꺼짐으로 닫는 경우가
-        // 정확히 그 상황이다. (잠금이 풀려서 닫는 경우는
-        // [handleScreenUnlocked] 가 곧바로 놓는다.)
-        let keepsCamera = settings.faceUnlockEnabled && LockMonitor.screenIsLockedNow()
-        endSession(releaseCamera: !keepsCamera)
+        endSession(releaseCamera: true)
         AwakeWindow.release()
         Log.app.info("인식 창 닫힘 — \(reason, privacy: .public)")
         refreshStatus()
@@ -618,78 +606,21 @@ final class AppState: ObservableObject {
         openWindow("준비 완료")
     }
 
-    /// 화면이 꺼졌다 — 창만 닫고 **장치는 놓지 않는다.**
+    /// 화면이 꺼졌다 — 창을 닫고 카메라를 놓는다.
     ///
-    /// 한 번은 여기서 놓아봤다. 화면이 꺼지면 프레임이 안 오니 붙잡을 이유가
-    /// 없어 보였고, 표시등과 배터리도 아깝다. 그런데 그렇게 하면 다시 켤 수가
-    /// 없다 — 화면만 껐다 켠 직후의 시동은 검은 프레임만 내놓고, 장치를 다시
-    /// 열어도(재개방 2회 실측) 돌아오지 않는다. 붙잡고 있는 것 말고는 방법이
-    /// 없다. 대신 [warmHoldLimit] 로 시간을 제한한다.
+    /// 화면이 꺼져 있는 동안에는 프레임이 한 장도 오지 않으므로, 붙잡고
+    /// 있어봐야 표시등과 배터리만 쓴다. 카메라가 사는 시점은 딱 둘 —
+    /// 덮개를 연 직후와, 잠긴 채 화면을 깨운 직후다. 둘 다 [handleWakeEvent]
+    /// 가 맡는다.
     private func handleScreensSlept() {
         closeWindow("화면이 꺼짐")
-    }
-
-    /// 유지 시간이 다 됐다. 인증이 진행 중이면 건드리지 않는다.
-    private func endWarmHold() {
-        warmHoldTimer?.invalidate()
-        warmHoldTimer = nil
-        guard session == nil, windowDeadline == nil else { return }
-        Log.app.info("잠긴 지 \(Int(self.warmHoldLimit / 60))분이 지나 카메라를 놓습니다 — 이후에는 비밀번호로 열어야 합니다")
         camera.stop(owner: self)
     }
 
     private func handleScreenUnlocked() {
         closeWindow("잠금이 풀림")
-        // 창이 열린 적 없이 [warmCamera] 만 잡고 있었다면 `closeWindow` 가
-        // 곧바로 되돌아간다(`windowDeadline == nil`). 그 경우까지 확실히
-        // 놓아야 표시등이 켜진 채로 남지 않는다.
-        warmHoldTimer?.invalidate()
-        warmHoldTimer = nil
         camera.stop(owner: self)
         refreshStatus()
-    }
-
-    /// 잠기는 **순간** 카메라 장치를 열어 잠금화면까지 끌고 간다. 인식은 하지
-    /// 않는다 — 프레임은 그냥 버린다.
-    ///
-    /// macOS 는 **잠긴 상태에서 카메라 장치를 처음 여는 경우 새까만 프레임을
-    /// 준다.** 오류도, 권한 거부도 아니다. `startRunning()` 은 성공하고
-    /// 초당 14장이 멀쩡히 도착하는데 내용만 전부 0이라, 코드 어디에서도
-    /// 고장으로 보이지 않는다. 실측(2026-08-28):
-    ///
-    ///   - 잠금 상태에서 세션을 새로 켠 3회 → 매초 `얼굴 0, 임베딩 0`
-    ///   - 별도 프로세스가 잠기기 **전부터** 장치를 열어둔 채 같은 코드를
-    ///     돌린 1회 → `얼굴 10, 최고 0.776` → 깜빡임 통과 → 잠금 해제 성공
-    ///
-    /// 즉 필요한 것은 세션이 아니라 **장치가 이미 스트리밍 중인 상태**다.
-    /// 잠긴 뒤에 껐다 켜면 다시 냉시동이라 소용없으므로, 잠금 경계를 넘겨
-    /// 계속 잡고 있는 것 말고는 방법이 없다.
-    ///
-    /// 대가는 잠겨 있는 동안 카메라 표시등이 켜져 있다는 것이다. 얼굴로
-    /// 잠금을 푸는 앱이 그 시간에 카메라를 보고 있는 건 숨길 일이 아니므로
-    /// 그대로 둔다. 기능을 끄면(`faceUnlockEnabled`) 켜지지 않는다.
-    /// 잠긴 채로 이 시간이 지나면 카메라를 놓는다.
-    ///
-    /// 붙잡고 있어야만 얼굴로 열리지만, 자리를 비운 몇 시간까지 켜둘 이유는
-    /// 없다. 이 시간을 넘긴 뒤에 돌아오면 비밀번호로 열어야 한다 — 배터리와
-    /// 맞바꾼 부분이고, 숨길 게 아니라 알고 쓰는 편이 낫다.
-    private let warmHoldLimit: TimeInterval = 10 * 60
-
-    private func warmCamera() {
-        // 권한이나 등록이 안 끝났으면 어차피 인식을 못 한다. 표시등만
-        // 켜놓는 꼴이 되므로 그때는 열지 않는다.
-        guard setupBlocker() == nil else { return }
-        Log.app.info("카메라를 미리 열어 잠금화면까지 유지합니다")
-        warmHoldTimer?.invalidate()
-        warmHoldTimer = Timer.scheduledTimer(withTimeInterval: warmHoldLimit,
-                                             repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.endWarmHold() }
-        }
-        camera.start(owner: self,
-                     onFrame: { _ in },
-                     onFailure: { reason in
-                         Log.camera.error("미리 열기 실패: \(reason, privacy: .public)")
-                     })
     }
 
     /// 인증 시도를 끝낸다.
