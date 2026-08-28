@@ -439,7 +439,9 @@ final class AppState: ObservableObject {
         // 10초가 더 붙어 있지만, 그 여유는 프레임이 한 장도 안 올 때 창을
         // 닫으려고 둔 것이다 — 프레임이 안 오는 동안 화면을 켜둘 이유는 없다.
         // 인식이 끝나거나 실패하면 [closeWindow] 가 시한 전에 놓는다.
-        AwakeWindow.hold(for: settings.recognitionTimeout)
+        // 진단 모드에서는 60초 관찰이 끝날 때까지 화면을 붙잡는다. 중간에
+        // 화면이 꺼지면 카메라도 자면서 재려던 것이 사라진다.
+        AwakeWindow.hold(for: CameraSession.diagnostics ? 90 : settings.recognitionTimeout)
 
         guard !alreadyOpen else { return }
         Log.app.info("인식 창 열림 — \(reason, privacy: .public)")
@@ -466,7 +468,9 @@ final class AppState: ObservableObject {
         // 진단 모드에서는 창이 닫혀도 장치를 계속 돌려야 60초 관찰이 끝난다.
         let stillLocked = settings.faceUnlockEnabled && LockMonitor.screenIsLockedNow()
         endSession(releaseCamera: !stillLocked)
-        AwakeWindow.release()
+        // 진단 중에는 놓지 않는다. 인증은 20초에 시간 초과로 끝나지만
+        // 관찰은 60초까지 이어져야 하고, 시한이 알아서 놓아준다.
+        if !CameraSession.diagnostics { AwakeWindow.release() }
         Log.app.info("인식 창 닫힘 — \(reason, privacy: .public)")
         refreshStatus()
     }
