@@ -73,6 +73,10 @@ else
          "Installing the face recognition model (ArcFace)"
     say "    라이선스상 DMG 에 동봉할 수 없어 공식 배포처에서 직접 내려받습니다." \
         "    Its license forbids bundling, so it is downloaded from the official source."
+    # 그 라이선스는 받아 쓰는 사람에게도 그대로 걸린다. 개인 기기면 상관없지만
+    # 회사 지급 기기라면 얘기가 달라지므로, 받기 전에 알려준다.
+    say "    비상업 연구용 라이선스입니다. 업무용 기기에 설치하신다면 먼저 라이선스를 확인해 주세요." \
+        "    It is licensed for non-commercial research only — check the license first if this is a work machine."
 
     # coremltools 가 Python 3.13+ 를 아직 지원하지 않는다.
     find_python() {

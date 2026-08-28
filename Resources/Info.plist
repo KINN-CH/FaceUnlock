@@ -17,7 +17,7 @@
     <key>LSUIElement</key>                  <true/>
 
     <key>NSCameraUsageDescription</key>
-    <string>잠금 화면에서 등록된 얼굴을 인식해 Mac 잠금을 해제하기 위해 카메라를 사용합니다. 영상은 기기 밖으로 나가지 않으며 저장되지 않습니다.</string>
+    <string>잠금 화면에서 등록된 얼굴을 인식해 Mac 잠금을 해제하기 위해 카메라를 사용합니다. 촬영한 영상은 저장하지 않고, 얼굴 특징값만 이 Mac 안에 암호화해 보관하며 기기 밖으로 내보내지 않습니다.</string>
 
     <key>NSHumanReadableCopyright</key>
     <string>MIT License. Provided AS IS, without warranty of any kind.</string>

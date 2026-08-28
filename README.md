@@ -9,7 +9,7 @@
 카메라가 얼굴을 알아보면 잠금 화면을 대신 풀어줍니다.<br>
 ArcFace 임베딩 · 눈 깜빡임 확인 · 비밀번호는 Secure Enclave에 봉인.
 
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](https://github.com/KINN-CH/FaceUnlock/releases)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000)](https://github.com/KINN-CH/FaceUnlock/releases)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-arm64-333333)](https://github.com/KINN-CH/FaceUnlock/releases)
 [![Swift](https://img.shields.io/badge/Swift-SwiftUI%20%C2%B7%20CoreML%20%C2%B7%20Vision-F05138?logo=swift&logoColor=white)](Sources)
 [![Release](https://img.shields.io/github/v/release/KINN-CH/FaceUnlock?color=brightgreen)](https://github.com/KINN-CH/FaceUnlock/releases/latest)
@@ -255,7 +255,12 @@ make dmg          # 배포용 DMG
 얼굴 임베딩은 InsightFace의 ArcFace(`buffalo_l` / `w600k_r50`)를 씁니다.
 비상업 연구용 라이선스라 저장소와 배포물에는 넣지 않고,
 [InsightFace 공식 릴리스](https://github.com/deepinsight/insightface/releases/tag/v0.7)에서
-직접 받아 CoreML로 변환합니다. 상업적으로 쓰려면 라이선스를 직접 확인하세요.
+직접 받아 CoreML로 변환합니다.
+
+이 제한은 쓰는 사람에게도 그대로 적용됩니다. 개인적으로 쓰는 건 문제없지만,
+회사에서 지급한 기기나 업무 목적의 사용은 '비상업 연구용' 범위를 벗어날 수
+있습니다. 그런 경우라면 먼저 라이선스를 확인해 보세요.
+
 변환 스크립트는 PyTorch 출력과 CoreML 출력의 코사인 유사도가 0.999 이상일
 때만 통과시킵니다. 여기서 어긋나면 인식이 통째로 무의미해집니다.
 
@@ -519,10 +524,15 @@ Face embeddings come from InsightFace's ArcFace (`buffalo_l` / `w600k_r50`).
 The non-commercial research license keeps it out of the repo and out of
 releases, so it's downloaded from the
 [official InsightFace release](https://github.com/deepinsight/insightface/releases/tag/v0.7)
-and converted to CoreML locally. Check the license yourself before any
-commercial use. The conversion script only passes when PyTorch and CoreML
-outputs agree to a cosine similarity of 0.999 or better — drift here makes the
-whole pipeline meaningless.
+and converted to CoreML locally.
+
+That restriction follows you, not just the repo. Personal use is fine, but a
+company-issued machine or anything work-related may fall outside "non-commercial
+research purposes" — check the license first if that's you.
+
+The conversion script only passes when PyTorch and CoreML outputs agree to a
+cosine similarity of 0.999 or better — drift here makes the whole pipeline
+meaningless.
 
 ## License
 
@@ -531,3 +541,13 @@ whole pipeline meaningless.
 The unlock mechanism follows the approach used by
 [Sapphire](https://github.com/cshariq/Sapphire)'s Face ID feature. No code was
 taken; it's a clean reimplementation.
+
+---
+
+## 상표 · Trademarks
+
+Apple, Mac, MacBook, Face ID, Touch ID는 Apple Inc.의 상표입니다.
+이 프로젝트는 Apple Inc.와 아무런 제휴·후원·보증 관계가 없습니다.
+
+Apple, Mac, MacBook, Face ID and Touch ID are trademarks of Apple Inc.
+This project is not affiliated with, sponsored by, or endorsed by Apple Inc.
