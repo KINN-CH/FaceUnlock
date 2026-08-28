@@ -31,6 +31,7 @@ ArcFace 임베딩 · 눈 깜빡임 확인 · 비밀번호는 Secure Enclave에 �
   <a href="#시작하기-전에">시작하기 전에</a> ·
   <a href="#설치">설치</a> ·
   <a href="#처음-설정">처음 설정</a> ·
+  <a href="#지우기">지우기</a> ·
   <a href="#동작-방식">동작 방식</a> ·
   <a href="#조용히-틀리는-것들">조용히 틀리는 것들</a> ·
   <a href="#알려진-문제">알려진 문제</a> ·
@@ -145,6 +146,43 @@ macOS 14 이상 Apple Silicon, Command Line Tools(`xcode-select --install`),
 켜지 않습니다. 다만 재시동 직후 **첫 로그인 화면은 얼굴로 못 엽니다.** 그때는
 macOS가 아직 앱을 띄우기 전이라 비밀번호를 직접 입력해야 하고, 그 뒤의 화면
 잠금부터 얼굴이 동작합니다.
+
+## 지우기
+
+설정 창 맨 아래 **FaceUnlock 완전 삭제**를 누르면 됩니다. 확인 창 한 번을 거쳐
+아래 것들을 지우고, 앱을 휴지통으로 옮긴 뒤 종료합니다.
+
+- 등록한 얼굴 (`~/Library/Application Support/FaceUnlock/faces.sealed`)
+- 봉인된 로그인 비밀번호와 Secure Enclave 키 (키체인)
+- 내려받은 얼굴 인식 모델 (`~/Library/Application Support/FaceUnlock/Models`)
+- 설정값·캐시·저장된 창 상태
+- 로그인 시 자동 실행 등록
+- `/Applications/FaceUnlock.app` — 지우지 않고 휴지통으로 보냅니다
+
+macOS 계정 비밀번호 자체는 건드리지 않습니다.
+
+**앱을 이미 휴지통에 넣으셨다면** 이 버튼을 누를 수가 없습니다. macOS에는 앱을
+지울 때 그 앱의 코드를 실행해 주는 장치가 없어서, 앱만 사라지고 위의 것들은
+그대로 남습니다. 저장소의 스크립트로 정리하세요.
+
+```bash
+git clone https://github.com/KINN-CH/FaceUnlock.git
+./FaceUnlock/scripts/uninstall.command
+```
+
+직접 지우셔도 됩니다.
+
+```bash
+rm -rf ~/Library/Application\ Support/FaceUnlock
+rm -rf ~/Library/Caches/io.github.kinnch.FaceUnlock ~/Library/Caches/FaceUnlock
+rm -f  ~/Library/Preferences/io.github.kinnch.FaceUnlock.plist
+rm -rf ~/Library/Saved\ Application\ State/io.github.kinnch.FaceUnlock.savedState
+security delete-generic-password -s io.github.kinnch.FaceUnlock   # 항목 수만큼 반복
+```
+
+어느 쪽으로 지우든 **시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용**
+목록에는 FaceUnlock이 남을 수 있습니다. 앱이 없으면 아무 일도 하지 않는
+빈 줄이지만, 거슬리면 `−`로 지우세요.
 
 ## 동작 방식
 
@@ -298,6 +336,7 @@ make dmg          # 배포용 DMG
   <a href="#before-you-turn-it-on">Before you turn it on</a> ·
   <a href="#install">Install</a> ·
   <a href="#first-time-setup">First-time setup</a> ·
+  <a href="#uninstalling">Uninstalling</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#the-things-that-fail-quietly">Fails quietly</a> ·
   <a href="#known-problems">Known problems</a> ·
@@ -418,6 +457,43 @@ login item, once. After that the *Launch at login* toggle in Settings is in
 charge — if you turn it off, it stays off. Note that the **first login screen
 after a restart cannot be opened by face**: macOS has not launched the app yet,
 so type your password there. Every screen lock after that works.
+
+## Uninstalling
+
+Press **Uninstall FaceUnlock** at the bottom of Settings. After one confirmation
+it removes the following, moves the app to the Trash, and quits.
+
+- Your enrolled faces (`~/Library/Application Support/FaceUnlock/faces.sealed`)
+- The sealed login password and the Secure Enclave key (Keychain)
+- The downloaded recognition model (`~/Library/Application Support/FaceUnlock/Models`)
+- Settings, caches, saved window state
+- The launch-at-login registration
+- `/Applications/FaceUnlock.app` — moved to the Trash, not erased
+
+Your actual macOS account password is left alone.
+
+**If you already dragged the app to the Trash**, that button is out of reach.
+macOS gives an app no chance to run when it is deleted, so the app disappears
+and everything above stays behind. Clean up with the script from the repository.
+
+```bash
+git clone https://github.com/KINN-CH/FaceUnlock.git
+./FaceUnlock/scripts/uninstall.command
+```
+
+Or by hand.
+
+```bash
+rm -rf ~/Library/Application\ Support/FaceUnlock
+rm -rf ~/Library/Caches/io.github.kinnch.FaceUnlock ~/Library/Caches/FaceUnlock
+rm -f  ~/Library/Preferences/io.github.kinnch.FaceUnlock.plist
+rm -rf ~/Library/Saved\ Application\ State/io.github.kinnch.FaceUnlock.savedState
+security delete-generic-password -s io.github.kinnch.FaceUnlock   # repeat per item
+```
+
+Either way, FaceUnlock may linger in **System Settings → Privacy & Security →
+Accessibility**. With the app gone it is a dead entry that does nothing, but you
+can remove it there with `−`.
 
 ## How it works
 

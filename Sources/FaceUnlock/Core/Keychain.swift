@@ -135,6 +135,24 @@ enum Keychain {
         return SecItemDelete(query as CFDictionary) == errSecSuccess
     }
 
+    /// 이 앱이 만든 Keychain 항목을 계정 구분 없이 전부 지운다.
+    ///
+    /// `Account` 를 하나씩 지우는 것과 달리 service 만으로 지우므로, 예전 버전이
+    /// 남긴 계정이나 앞으로 늘어날 계정까지 함께 사라진다. 완전 삭제에서는
+    /// "빠뜨린 항목이 없다" 가 목록의 정확성보다 중요하다.
+    ///
+    /// 지울 게 없었던 경우(`errSecItemNotFound`)도 성공으로 본다 — 이미 깨끗한
+    /// 상태를 실패라고 보고하면 사용자가 남은 게 있다고 오해한다.
+    @discardableResult
+    static func deleteAll() -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
+
     /// 존재만 확인한다. **데이터를 요청하지 않는 것이 핵심이다.**
     ///
     /// `kSecReturnData: true` 로 물으면 Keychain 이 복호화를 시도하고, 그 순간

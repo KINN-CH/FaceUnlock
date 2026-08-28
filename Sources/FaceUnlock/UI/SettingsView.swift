@@ -12,6 +12,8 @@ struct SettingsView: View {
     @State private var passwordOK = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
+    @State private var uninstallStep: UninstallStep?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -21,6 +23,7 @@ struct SettingsView: View {
                 passwordSection
                 behaviourSection
                 languageSection
+                uninstallSection
                 aboutFooter
                 Spacer(minLength: 0)
             }
@@ -373,6 +376,151 @@ struct SettingsView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+        }
+    }
+
+    // MARK: 완전 삭제
+
+    /// 삭제 흐름에서 사용자에게 물어봐야 하는 순간들.
+    ///
+    /// 한 화면에 `.alert` 를 여러 개 붙이면 SwiftUI 가 어느 하나만 띄우는 일이
+    /// 있어서, 상태 하나로 묶고 알림도 하나만 둔다.
+    enum UninstallStep {
+        /// 정말 지울지 확인.
+        case confirm
+        /// 데이터 일부를 못 지웠다. 앱까지 지울지 다시 묻는다.
+        case dataFailed(String)
+        /// 데이터는 지웠는데 앱 번들을 못 옮겼다. 사용자가 직접 해야 한다.
+        case trashFailed(String)
+    }
+
+    /// 지우는 방법이 "터미널에 명령어를 붙여넣기" 뿐이면 대부분은 앱만 휴지통에
+    /// 넣고 나머지를 남긴다. 남는 것 중에는 봉인된 로그인 비밀번호와 얼굴
+    /// 임베딩이 있다 — 그건 지우기 제일 쉬워야 할 것들이다. 그래서 버튼으로 둔다.
+    private var uninstallSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(T("완전 삭제", "Uninstall")).font(.headline)
+
+            Text(T("""
+            등록한 얼굴, 봉인된 로그인 비밀번호, 내려받은 얼굴 인식 모델, 설정값, \
+            로그인 시 자동 실행 등록을 모두 지운 뒤 앱을 휴지통으로 옮기고 종료합니다.
+            """, """
+            Deletes your enrolled faces, the sealed login password, the downloaded \
+            recognition model, your settings and the launch-at-login registration, then \
+            moves the app to the Trash and quits.
+            """))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Spacer()
+                Button(T("FaceUnlock 완전 삭제…", "Uninstall FaceUnlock…"), role: .destructive) {
+                    uninstallStep = .confirm
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.red.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .alert(uninstallAlertTitle,
+               isPresented: Binding(get: { uninstallStep != nil },
+                                    set: { if !$0 { uninstallStep = nil } })) {
+            switch uninstallStep {
+            case .confirm:
+                Button(T("취소", "Cancel"), role: .cancel) {}
+                Button(T("삭제하고 종료", "Delete and Quit"), role: .destructive) {
+                    performUninstall()
+                }
+            case .dataFailed:
+                Button(T("취소", "Cancel"), role: .cancel) {}
+                Button(T("그래도 앱 삭제", "Delete the App Anyway"), role: .destructive) {
+                    trashApp()
+                }
+            case .trashFailed, .none:
+                Button(T("확인", "OK"), role: .cancel) {}
+            }
+        } message: {
+            Text(uninstallAlertMessage)
+        }
+    }
+
+    private var uninstallAlertTitle: String {
+        switch uninstallStep {
+        case .confirm, .none:
+            return T("FaceUnlock 을 완전히 삭제할까요?", "Uninstall FaceUnlock?")
+        case .dataFailed, .trashFailed:
+            return T("삭제 중 문제가 있었습니다", "Something could not be removed")
+        }
+    }
+
+    private var uninstallAlertMessage: String {
+        switch uninstallStep {
+        case .confirm, .none:
+            return T("""
+                지워지는 것: 등록된 얼굴, 저장된 로그인 비밀번호, 내려받은 인식 모델, \
+                설정값, 로그인 시 자동 실행 등록.
+
+                앱은 휴지통으로 옮겨지고 곧바로 종료됩니다. macOS 계정 비밀번호 자체는 \
+                바뀌지 않습니다.
+                """, """
+                This removes: enrolled faces, the saved login password, the downloaded \
+                recognition model, your settings, and the launch-at-login registration.
+
+                The app is moved to the Trash and quits immediately. Your actual macOS \
+                account password is not changed.
+                """)
+        case .dataFailed(let detail):
+            return T("""
+                다음 항목을 지우지 못했습니다:
+
+                \(detail)
+
+                앱까지 지우면 이 버튼으로 다시 시도할 수 없습니다. 저장소의 \
+                scripts/uninstall.command 로 남은 것을 지울 수 있습니다.
+                """, """
+                These could not be removed:
+
+                \(detail)
+
+                Once the app is gone you cannot retry from here. You can clean up the \
+                rest with scripts/uninstall.command from the repository.
+                """)
+        case .trashFailed(let detail):
+            return T("""
+                데이터는 지워졌지만 앱을 휴지통으로 옮기지 못했습니다: \(detail)
+
+                Finder 에서 응용 프로그램 폴더의 FaceUnlock 을 직접 휴지통에 넣어 주세요.
+                """, """
+                Your data was removed, but the app could not be moved to the Trash: \(detail)
+
+                Please drag FaceUnlock from your Applications folder to the Trash yourself.
+                """)
+        }
+    }
+
+    /// 데이터를 먼저 지우고, 깨끗하면 앱 자신을 휴지통으로 보낸다.
+    ///
+    /// 남은 게 있으면 곧바로 앱을 지우지 않는다. 앱이 사라진 뒤에는 사용자가
+    /// 이 버튼으로 다시 시도할 방법이 없기 때문이다.
+    ///
+    /// 알림 버튼에서 곧바로 실행하지 않고 한 턴 미루는 이유: 알림이 닫히는 도중에
+    /// `uninstallStep` 을 새 값으로 바꾸면 SwiftUI 가 닫으면서 그 값을 nil 로
+    /// 되돌려, 다음 알림이 나타나지 않는다.
+    private func performUninstall() {
+        DispatchQueue.main.async {
+            let report = Uninstaller.removeUserData()
+            guard report.isClean else {
+                uninstallStep = .dataFailed(report.failed.joined(separator: "\n"))
+                return
+            }
+            trashApp()
+        }
+    }
+
+    private func trashApp() {
+        Uninstaller.trashAppAndQuit { message in
+            uninstallStep = .trashFailed(message)
         }
     }
 
