@@ -146,6 +146,8 @@ final class AppState: ObservableObject {
     /// 예전에는 이 알림을 안 듣고 2초마다 디스플레이 상태를 물어봤다.
     private var sleepObserver: NSObjectProtocol?
     private var systemSleepObserver: NSObjectProtocol?
+    /// 잠긴 채 카메라를 붙잡는 시간을 재는 타이머. [holdLimit] 참조.
+    private var holdTimer: Timer?
 
     /// 이번 시도를 시작한 시각. 카메라 감시용.
     private var attemptStartedAt: CFTimeInterval?
@@ -639,12 +641,16 @@ final class AppState: ObservableObject {
     /// 그때의 냉시동은 실제로 성공한다(16:16:16 — 얼굴 일치 → 잠금 해제).
     private func handleSystemWillSleep() {
         closeWindow("시스템 절전")
+        holdTimer?.invalidate()
+        holdTimer = nil
         camera.stop(owner: self)
         Log.app.info("시스템이 자므로 카메라를 놓습니다")
     }
 
     private func handleScreenUnlocked() {
         closeWindow("잠금이 풀림")
+        holdTimer?.invalidate()
+        holdTimer = nil
         // 창이 열린 적 없이 [holdCamera] 만 쥐고 있었다면 `closeWindow` 가
         // 곧바로 되돌아간다(`windowDeadline == nil`). 그 경우까지 확실히
         // 놓아야 표시등이 켜진 채로 남지 않는다.
@@ -661,16 +667,46 @@ final class AppState: ObservableObject {
     /// 대가는 덮개가 열린 채 잠겨 있는 동안 표시등이 켜져 있다는 것이다.
     /// 덮고 나가면 [handleSystemWillSleep] 이 놓으므로, 자리를 비우는 동안
     /// 카메라가 도는 일은 없다.
+    /// 덮개를 연 채 잠긴 상태에서 카메라를 붙잡는 시간의 상한.
+    ///
+    /// 무기한 붙잡으면 안 된다. 카메라가 도는 동안 맥이 **유휴 절전에 들지
+    /// 못한다** — 잠그고 12분을 두었는데 끝까지 깨어 있었다(17:08~17:20
+    /// 실측). 카메라 전력에 시스템이 안 자는 전력까지 얹힌다.
+    ///
+    /// 이 시간이 지나면 놓는다. 그러면 맥이 곧(`pmset sleep` 설정, 여기서는
+    /// 1분) 절전에 들고, 그 뒤에 돌아오면 시스템 절전 복귀 = 냉시동이
+    /// **되는** 경우라 얼굴로 열린다.
+    ///
+    /// 대가는 그 사이의 틈이다. 놓은 뒤부터 맥이 잠들기 전까지(약 1분)
+    /// 돌아오시면 냉시동이 실패해 비밀번호로 열어야 한다. 이 틈을 없애려면
+    /// 놓으면서 `pmset sleepnow` 로 맥을 재우면 되는데, 사용자가 시키지
+    /// 않은 일이라 하지 않는다.
+    private let holdLimit: TimeInterval = 3 * 60
+
     private func holdCamera() {
         // 권한이나 등록이 안 끝났으면 어차피 인식을 못 한다. 표시등만 켜는
         // 꼴이 되므로 그때는 열지 않는다.
         guard setupBlocker() == nil else { return }
         Log.app.info("카메라를 미리 열어 잠금화면까지 유지합니다")
+        holdTimer?.invalidate()
+        holdTimer = Timer.scheduledTimer(withTimeInterval: holdLimit,
+                                         repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endHold() }
+        }
         camera.start(owner: self,
                      onFrame: { _ in },
                      onFailure: { reason in
                          Log.camera.error("미리 열기 실패: \(reason, privacy: .public)")
                      })
+    }
+
+    /// 붙잡는 시간이 다 됐다. 인증 중이면 건드리지 않는다.
+    private func endHold() {
+        holdTimer?.invalidate()
+        holdTimer = nil
+        guard session == nil, windowDeadline == nil else { return }
+        Log.app.info("\(Int(self.holdLimit / 60))분이 지나 카메라를 놓습니다 — 맥이 잠든 뒤에 깨우면 얼굴로 열립니다")
+        camera.stop(owner: self)
     }
 
     /// 인증 시도를 끝낸다.

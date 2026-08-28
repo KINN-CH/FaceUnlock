@@ -673,6 +673,10 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         // 이 상태에 빠지지 않는 것이 유일한 대책이고, 그건 잠기기 전부터
         // 장치를 붙잡고 있는 것이다 — AppState.warmCamera 참조.
         Log.camera.error("화면은 켜져 있는데 새까만 프레임만 옵니다 — 이번 잠금은 비밀번호로 열어야 합니다")
+        // 기다려봐야 소용없다는 걸 아는데 20초 제한시간까지 세워둘 이유가
+        // 없다. 바로 알리고 비밀번호로 넘긴다.
+        onFailure?(T("카메라가 검은 화면만 보냅니다 — 비밀번호로 로그인하세요.",
+                     "The camera is only sending black frames — log in with your password."))
     }
 
     private static func meanBrightness(of buffer: CVPixelBuffer) -> Double {

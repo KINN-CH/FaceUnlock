@@ -8,7 +8,7 @@ BUNDLE_ID  := io.github.kinnch.FaceUnlock
 # 올리고 plist 는 0.1.0 인 채로 배포되는 일이 실제로 있었다.
 # 릴리스 절차: 이 두 줄을 올린다 → make dmg → git tag v$(VERSION)
 VERSION    := 0.1.5
-BUILD_NUM  := 8
+BUILD_NUM  := 9
 TARGET     := arm64-apple-macos14.0
 
 BUILD_DIR  := build
