@@ -44,7 +44,7 @@ It all runs on the machine — your face never leaves your Mac.
 
 <sub>이 표의 한국어 설명은 <a href="#동작-방식">동작 방식</a>과 <a href="#시작하기-전에">시작하기 전에</a>에 더 자세히 있습니다.</sub>
 
-<sub>`macbook-faceid` · `face-recognition` · `arcface` · `coreml` · `vision-framework` · `secure-enclave` · `swiftui` · `menu-bar-app` · `screen-unlock` · `macos`</sub>
+<sub>`macos` · `macbook` · `face-unlock` · `faceid` · `face-recognition` · `screen-lock` · `biometrics` · `secure-enclave` · `arcface` · `coreml` · `vision-framework` · `swift` · `swiftui` · `menu-bar-app` · `apple-silicon`</sub>
 
 ---
 

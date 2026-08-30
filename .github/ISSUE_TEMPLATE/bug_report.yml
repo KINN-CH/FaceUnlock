@@ -1,0 +1,79 @@
+name: Bug report · 버그 신고
+description: 무언가 동작하지 않을 때 · Something doesn't work
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **얼굴 사진, 비밀번호, `faces.sealed` 파일은 절대 올리지 마세요.**
+        **Never attach a photo of your face, your password, or `faces.sealed`.**
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 무슨 일이 있었나요 · What happened
+      description: 기대한 것과 실제로 일어난 것. · What you expected, and what actually happened.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: when
+    attributes:
+      label: 언제 그런가요 · When does it happen
+      options:
+        - 잠근 직후에는 되는데 화면이 꺼졌다 깨우면 안 됨 · Works right after locking, fails after the screen sleeps
+        - 항상 안 됨 · Never works
+        - 가끔 안 됨 · Fails sometimes
+        - 잠금 해제 말고 다른 부분 · Something other than unlocking
+    validations:
+      required: true
+
+  - type: input
+    id: mac
+    attributes:
+      label: 맥북 모델 · MacBook model
+      placeholder: "MacBook Air M2, 2022"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: macOS 버전 · macOS version
+      placeholder: "15.2"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 앱 버전 · App version
+      description: 메뉴바 → 설정 하단, 또는 About. · Bottom of Settings, or About.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: 어떻게 설치했나요 · How did you install it
+      options:
+        - DMG
+        - 소스에서 빌드 · Built from source
+    validations:
+      required: true
+
+  - type: input
+    id: camera
+    attributes:
+      label: 어떤 카메라 · Which camera
+      placeholder: "내장 · Built-in / Logitech C920 / ..."
+
+  - type: textarea
+    id: log
+    attributes:
+      label: 로그 · Log
+      description: |
+        `make log` 을 돌리거나, Console.app 에서 `io.github.kinnch.FaceUnlock` 으로 걸러 붙여주세요.
+        Run `make log`, or filter Console.app by `io.github.kinnch.FaceUnlock`.
+      render: text

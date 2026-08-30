@@ -1,0 +1,30 @@
+name: Feature request · 기능 제안
+description: 있었으면 하는 것 · Something you wish it did
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        먼저 [CONTRIBUTING](https://github.com/KINN-CH/FaceUnlock/blob/main/CONTRIBUTING.md#deliberately-out-of-scope)
+        의 '일부러 다루지 않는 것' 표를 봐주세요 — PAM 모듈, 패시브 안티스푸핑,
+        Sparkle 자동 설치, 임계값 조정은 의도적으로 제외했습니다.
+
+        Please check the *deliberately out of scope* table in CONTRIBUTING first.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 어떤 상황에서 불편한가요 · What are you actually running into
+      description: 해결책보다 상황을 먼저 적어주세요. · Describe the situation before the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: 어떻게 되면 좋을까요 · What would you like it to do
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: 지금은 어떻게 하고 계신가요 · How do you work around it today

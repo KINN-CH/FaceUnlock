@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 잠금 해제가 안 돼요 / It didn't unlock
+    url: https://github.com/KINN-CH/FaceUnlock/discussions
+    about: 버그인지 확실하지 않으면 Discussions 가 빠릅니다. · Not sure it's a bug? Discussions is faster.
+  - name: 보안 문제 신고 / Report a security issue
+    url: https://github.com/KINN-CH/FaceUnlock/security/advisories/new
+    about: 남의 맥에 들어갈 수 있게 되는 문제는 공개 이슈로 올리지 말아주세요. · Never file these in public.
