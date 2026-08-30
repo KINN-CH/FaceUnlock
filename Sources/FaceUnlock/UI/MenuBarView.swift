@@ -7,7 +7,12 @@ struct MenuBarView: View {
     @ObservedObject private var updates = UpdateChecker.shared
 
     var body: some View {
-        Text(state.status.label)
+        // '대기 중' 은 적지 않는다. 아무 문제가 없다는 뜻이라 알려줄 것이 없고,
+        // 메뉴를 열 수 있다는 것 자체가 이미 잠기지 않았다는 말이다.
+        // 나머지 상태(꺼짐 · 설정 필요 · 실패)는 사용자가 할 일이 있으므로 남긴다.
+        if state.status != .idle {
+            Text(state.status.label)
+        }
 
         // 확인이 끝났을 때만 한 줄 는다. 확인 전이거나 실패했으면(오프라인,
         // 자동 확인 꺼둠) 아무 말도 하지 않는다 — 모르는 것을 '최신입니다' 라고
