@@ -276,6 +276,42 @@ final class CameraSession: NSObject {
         }
     }
 
+    /// 고를 카메라가 바뀌었다. 지금 구성을 버리고 다시 고르게 한다.
+    ///
+    /// **왜 필요한가**: 세션 구성은 한 번만 하고 그 뒤로는 재사용한다
+    /// ([startOnQueue] 의 `isConfigured`). 그래서 설정에서 카메라를 바꿔도 이미
+    /// 열린 장치가 그대로 다시 열렸다 — 아이폰 카메라를 한 번 고르면 내장으로
+    /// 되돌려도 앱을 다시 켜기 전까지 계속 아이폰이 켜졌다.
+    ///
+    /// 돌고 있던 중이면 그 자리에서 다시 켠다. 인식 테스트 창을 열어둔 채
+    /// 카메라를 바꾸면 미리보기가 바로 바뀌어야 고른 게 먹었는지 알 수 있다.
+    func reconfigureForNewDevice() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard self.isConfigured else { return }
+
+            // 재개방과 같은 절차다. 도는 동안 감시견이 끼어들지 않게 막는다.
+            self.isResetting = true
+            self.session.stopRunning()
+            self.session.beginConfiguration()
+            self.session.inputs.forEach { self.session.removeInput($0) }
+            self.session.outputs.forEach { self.session.removeOutput($0) }
+            self.session.commitConfiguration()
+            self.isConfigured = false
+            self.activeDevice = nil
+            Log.camera.info("카메라 설정이 바뀌어 구성을 버립니다")
+
+            // 장치가 완전히 놓이기를 기다린다 — [hardReset] 과 같은 이유.
+            self.queue.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self else { return }
+                self.isResetting = false
+                guard self.shouldBeRunning else { return }
+                self.resetAttempts = 0
+                self.startOnQueue()
+            }
+        }
+    }
+
     /// 빌린 쪽만 끌 수 있다. 남이 쓰는 중이면 아무 일도 하지 않는다.
     func stop(owner: AnyObject) {
         queue.async { [weak self] in
@@ -604,14 +640,42 @@ final class CameraSession: NSObject {
         Log.camera.info("활성 포맷: \(size.width)×\(size.height) @\(fps)fps (시스템 기본값)")
     }
 
-    private static func preferredDevice() -> AVCaptureDevice? {
-        let discovery = AVCaptureDevice.DiscoverySession(
+    /// 고를 수 있는 카메라 목록. 설정 화면의 선택 목록도 이 함수를 쓴다 —
+    /// 목록을 만드는 곳과 고르는 곳이 갈라지면 언젠가 어긋난다.
+    ///
+    /// `position` 을 `.front` 로 좁히면 **외장 웹캠이 통째로 빠진다.**
+    /// 외장 장치는 위치를 `.unspecified` 로 보고하기 때문이다. 예전 코드는
+    /// `.front` 로 찾아놓고 그 뒤에서 외장으로 폴백하려 했는데, 그 폴백은
+    /// 애초에 걸릴 장치가 없어 한 번도 동작하지 않았다.
+    static func availableDevices() -> [AVCaptureDevice] {
+        AVCaptureDevice.DiscoverySession(
             deviceTypes: [.builtInWideAngleCamera, .external],
             mediaType: .video,
-            position: .front)
+            position: .unspecified).devices
+    }
+
+    /// 지금 규칙대로면 어느 장치를 열게 되는가.
+    ///
+    /// 설정 화면과 인식 테스트 창도 이 함수를 불러 "지금 쓰는 카메라" 를
+    /// 표시한다. 표시용 규칙을 따로 만들면 실제로 열리는 장치와 어긋난다.
+    static func preferredDevice() -> AVCaptureDevice? {
+        let devices = availableDevices()
+
+        // 사용자가 고른 장치가 있으면 그것을 쓴다. 이 함수는 카메라 큐에서
+        // 불리고 `Settings` 는 @MainActor 라 여기서 읽을 수 없으므로,
+        // 스레드 안전한 UserDefaults 를 같은 키 상수로 직접 본다.
+        if let chosen = UserDefaults.standard.string(forKey: Settings.preferredCameraIDKey) {
+            if let device = devices.first(where: { $0.uniqueID == chosen }) {
+                return device
+            }
+            // 지정한 웹캠을 빼놓고 잠갔다고 얼굴 해제가 통째로 죽으면 안 된다.
+            // 자동 규칙으로 물러서되, 왜 다른 카메라가 켜졌는지는 남긴다.
+            Log.camera.info("지정한 카메라가 연결되어 있지 않아 자동 선택으로 물러섭니다")
+        }
+
         // 내장 카메라를 우선한다 — 외장 웹캠은 잠금 중에 꽂혀 있지 않을 수 있다.
-        return discovery.devices.first { $0.deviceType == .builtInWideAngleCamera }
-            ?? discovery.devices.first
+        return devices.first { $0.deviceType == .builtInWideAngleCamera }
+            ?? devices.first
             ?? AVCaptureDevice.default(for: .video)
     }
 }

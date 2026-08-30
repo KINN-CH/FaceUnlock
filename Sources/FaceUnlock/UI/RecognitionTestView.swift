@@ -245,6 +245,13 @@ struct RecognitionTestView: View {
                                 lineWidth: 3)
                 )
 
+            // 설정에서 고른 카메라가 실제로 쓰이는지 눈으로 확인할 수 있어야 한다.
+            if let name = CameraSession.preferredDevice()?.localizedName {
+                Text(T("카메라: \(name)", "Camera: \(name)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             VStack(spacing: 6) {
                 Text(controller.headline)
                     .font(.title3)

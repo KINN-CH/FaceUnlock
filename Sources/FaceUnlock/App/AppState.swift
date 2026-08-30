@@ -225,6 +225,13 @@ final class AppState: ObservableObject {
 
         recheckVault()
         preloadPipelineIfEnabled()
+
+        // 새 버전 확인은 시작하고 조금 뒤에. 시작 경로에는 이미 모델 프리로드와
+        // 키체인 확인이 몰려 있고, 이건 그 무엇보다 급하지 않다.
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            UpdateChecker.shared.checkIfDue()
+        }
     }
 
     // MARK: 모델 예열

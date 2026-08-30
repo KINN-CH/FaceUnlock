@@ -4,9 +4,17 @@ struct MenuBarView: View {
     @EnvironmentObject private var state: AppState
     @ObservedObject private var settings = Settings.shared
     @ObservedObject private var l10n = L10n.shared
+    @ObservedObject private var updates = UpdateChecker.shared
 
     var body: some View {
         Text(state.status.label)
+
+        // 새 버전이 있을 때만 줄이 하나 는다. 평소에는 메뉴가 그대로다.
+        if let release = updates.available {
+            Button(T("새 버전 \(release.version) 받기", "Get version \(release.version)")) {
+                updates.openReleasePage()
+            }
+        }
 
         Divider()
 

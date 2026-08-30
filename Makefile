@@ -7,8 +7,8 @@ BUNDLE_ID  := io.github.kinnch.FaceUnlock
 # 여기 값이 각인된다. 예전에는 plist 에 직접 적혀 있어서, 태그만 v0.1.1 로
 # 올리고 plist 는 0.1.0 인 채로 배포되는 일이 실제로 있었다.
 # 릴리스 절차: 이 두 줄을 올린다 → make dmg → git tag v$(VERSION)
-VERSION    := 0.1.5
-BUILD_NUM  := 12
+VERSION    := 0.2.0
+BUILD_NUM  := 13
 TARGET     := arm64-apple-macos14.0
 
 BUILD_DIR  := build
@@ -74,7 +74,7 @@ endif
 
 # 정렬 파이프라인 확인용 CLI. 앱 번들 없이 사진만으로 검증한다.
 #   make aligntest && ./build/aligntest photo1.jpg photo2.jpg
-ALIGNTEST_SRCS := Tools/AlignTest/main.swift Tools/AlignTest/SelfTest.swift \
+ALIGNTEST_SRCS := tools/AlignTest/main.swift tools/AlignTest/SelfTest.swift \
     Sources/FaceUnlock/Core/Log.swift \
     Sources/FaceUnlock/Core/L10n.swift \
     Sources/FaceUnlock/Core/VectorMath.swift \

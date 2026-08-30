@@ -14,6 +14,7 @@ ArcFace 임베딩 · 눈 깜빡임 확인 · 비밀번호는 Secure Enclave에 �
 [![Swift](https://img.shields.io/badge/Swift-SwiftUI%20%C2%B7%20CoreML%20%C2%B7%20Vision-F05138?logo=swift&logoColor=white)](Sources)
 [![Release](https://img.shields.io/github/v/release/KINN-CH/FaceUnlock?color=brightgreen)](https://github.com/KINN-CH/FaceUnlock/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![build](https://github.com/KINN-CH/FaceUnlock/actions/workflows/build.yml/badge.svg)](https://github.com/KINN-CH/FaceUnlock/actions/workflows/build.yml)
 
 ### [⬇︎ 최신 버전 내려받기 (DMG)](https://github.com/KINN-CH/FaceUnlock/releases/latest)
 
@@ -65,6 +66,14 @@ Face ID가 적외선 점 3만 개로 얼굴의 입체를 읽는 것과 달리, �
 잠금에서만 동작합니다.
 
 **설치해도 꺼져 있습니다.** 설정에서 직접 켜야 시작합니다.
+
+**밖으로 나가는 것은 새 버전 확인 하나뿐입니다.** 하루에 한 번 GitHub 릴리스
+페이지에 인증 없는 요청을 하나 보내 최신 버전 번호만 읽어옵니다. 얼굴도,
+비밀번호도, 사용 기록도, 기기 식별자도 보내지 않습니다 — GitHub 서버가 알 수
+있는 것은 접속 IP뿐입니다. 이 확인을 넣은 이유는 v0.1.0~0.1.4에 잠금 화면에서
+카메라가 검은 화면만 주는 결함이 있었는데 *그 버전을 쓰는 사람에게 알릴 방법이
+없었기* 때문입니다. 설정 → 업데이트에서 끌 수 있고, 끄면 요청 자체가 나가지
+않습니다. 내려받기와 설치는 언제나 직접 하십니다.
 
 아무런 보증 없이 제공됩니다. 자세한 건 [LICENSE](LICENSE)를 보세요.
 
@@ -132,13 +141,18 @@ macOS 14 이상 Apple Silicon, Command Line Tools(`xcode-select --install`),
 않는 건 의도한 동작입니다 — [동작 방식](#동작-방식)을 보세요.
 언어는 설정에서 시스템 따름(기본) / 한국어 / English 중에 고를 수 있습니다.
 
-바꿀 수 있는 값은 셋입니다.
+바꿀 수 있는 값은 다섯입니다.
 
 | 항목 | 기본값 | |
 |---|---|---|
 | 인식 엄격도 | 0.48 | 높이면 타인이 열 확률은 줄지만 본인도 자주 실패합니다 |
 | 눈 깜빡임 확인 | 켜짐 | 끄면 인쇄된 사진으로도 열립니다. 켜두세요 |
 | 인식 제한 시간 | 20초 | 지나면 포기하고 비밀번호 입력으로 넘어갑니다 |
+| 카메라 | 자동 | 자동은 내장을 먼저 씁니다. 맥북을 덮고 외장 모니터로 쓴다면 웹캠을 직접 고르세요 |
+| 새 버전 확인 | 켜짐 | 하루 한 번. 무엇이 오가는지는 [시작하기 전에](#시작하기-전에) |
+
+카메라는 고르는 즉시 바뀝니다. 고른 웹캠이 잠글 때 꽂혀 있지 않으면 내장
+카메라로 되돌아갑니다 — 케이블을 뽑아놨다고 얼굴 해제가 통째로 죽지는 않습니다.
 
 **재시동해도 알아서 다시 뜹니다.** 이 앱은 떠 있지 않으면 아무 일도 하지
 않으므로, **얼굴로 잠금 해제**를 처음 켤 때 로그인 항목으로 한 번 등록합니다.
@@ -384,6 +398,15 @@ you've logged in.
 
 **It ships off.** You have to turn it on in Settings.
 
+**The only thing it sends anywhere is an update check.** Once a day it makes a
+single unauthenticated request to the GitHub releases page and reads the latest
+version number. No faces, no password, no usage data, no device identifier —
+GitHub sees your IP address and nothing else. The check exists because v0.1.0
+through v0.1.4 had a bug that left the camera black on the lock screen, and
+*there was no way to tell the people running those versions.* Settings →
+Updates turns it off, and with it off no request is made at all. Downloading
+and installing is always something you do yourself.
+
 Provided with no warranty of any kind. See [LICENSE](LICENSE).
 
 ## Install
@@ -454,13 +477,19 @@ right after locking deliberately does nothing; see [How it works](#how-it-works)
 Language follows the system by default; Korean and English can be picked in
 Settings.
 
-Three settings are adjustable.
+Five settings are adjustable.
 
 | Setting | Default | |
 |---|---|---|
 | Match strictness | 0.48 | Higher means strangers are less likely to get in, and so are you |
 | Blink check | On | Off means a printed photo opens it. Leave it on |
 | Recognition timeout | 20s | After that it gives up and hands over to the password field |
+| Camera | Automatic | Automatic prefers the built-in one. Pick your webcam if you run the lid closed |
+| Update check | On | Once a day; see [Before you turn it on](#before-you-turn-it-on) for what it sends |
+
+The camera switches as soon as you pick it. If the webcam you picked isn't
+plugged in when the screen locks, it falls back to the built-in camera —
+unplugging a cable doesn't take face unlock down with it.
 
 **It comes back on its own after a restart.** The app does nothing unless it is
 running, so the first time you turn **Face unlock** on it registers itself as a

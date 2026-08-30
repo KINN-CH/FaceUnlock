@@ -1,0 +1,41 @@
+# 빌드와 자체 검증.
+#
+# 여기서 `make model` 과 `make xcheck` 는 돌리지 않는다. 둘 다 InsightFace
+# 가중치를 내려받는데 그 라이선스가 비상업 연구용이라, 공개 CI 가 매번
+# 받아가게 둘 수는 없다. 대신 `--selftest` 는 모델 없이 도는 검사들만
+# 모아둔 것이라 여기서 그대로 쓸 수 있다.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    # 반드시 Apple Silicon 러너여야 한다 — 빌드 타깃이 arm64-apple-macos14.0 다.
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 도구 버전
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: 앱 빌드
+        # 러너에는 서명 인증서가 없으므로 Makefile 이 ad-hoc 서명으로 넘어간다.
+        run: make release
+
+      - name: 서명 확인
+        run: codesign --verify --strict --verbose=2 build/FaceUnlock.app
+
+      - name: 자체 검증 도구 빌드
+        run: make aligntest
+
+      # 잠금 가드 / 유사변환 잔차 / 렌더 상하 방향.
+      # 잠금 가드는 실제 화면 상태와 대조하는 검사라, 세션이 없는 러너에서는
+      # 양쪽 모두 "안 잠김" 으로 읽혀 통과한다.
+      - name: 자체 검증
+        run: ./build/aligntest --selftest

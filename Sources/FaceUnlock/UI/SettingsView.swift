@@ -1,3 +1,4 @@
+import AVFoundation
 import ServiceManagement
 import SwiftUI
 
@@ -6,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject private var settings = Settings.shared
     @ObservedObject private var store = FaceStore.shared
     @ObservedObject private var l10n = L10n.shared
+    @ObservedObject private var updates = UpdateChecker.shared
 
     @State private var password = ""
     @State private var passwordMessage: String?
@@ -13,6 +15,10 @@ struct SettingsView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     @State private var uninstallStep: UninstallStep?
+
+    /// 지금 꽂혀 있는 카메라들. 창이 열릴 때마다 다시 읽는다 — 웹캠은 중간에
+    /// 꽂았다 뺐다 한다.
+    @State private var cameras: [AVCaptureDevice] = []
 
     var body: some View {
         ScrollView {
@@ -22,6 +28,7 @@ struct SettingsView: View {
                 faceSection
                 passwordSection
                 behaviourSection
+                updateSection
                 languageSection
                 uninstallSection
                 aboutFooter
@@ -32,6 +39,7 @@ struct SettingsView: View {
         .frame(minWidth: 440)
         .onAppear {
             state.refreshStatus()
+            cameras = CameraSession.availableDevices()
             // 사용자가 시스템 설정에서 권한을 켜는 동안 이 창은 열려 있다.
             // 다시 읽지 않으면 초록불이 영영 안 켜진다.
             state.startPermissionPolling()
@@ -325,6 +333,9 @@ struct SettingsView: View {
 
             Toggle(T("얼굴로 잠금 해제", "Unlock with Face"), isOn: $settings.faceUnlockEnabled)
 
+            cameraPicker
+                .disabled(!settings.faceUnlockEnabled)
+
             Toggle(T("눈 깜빡임 확인 요구", "Require a blink"), isOn: $settings.requireBlink)
                 .disabled(!settings.faceUnlockEnabled)
             Text(T("끄면 인쇄된 사진으로도 잠금이 열립니다. 켜두는 것을 강력히 권장합니다.",
@@ -361,6 +372,87 @@ struct SettingsView: View {
 
             Toggle(T("로그인 시 자동 실행", "Launch at login"), isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
+        }
+    }
+
+    /// 쓸 카메라 고르기.
+    ///
+    /// 기본값(자동)은 내장 카메라를 우선한다. 맥북을 덮고 외장 모니터로 쓰면
+    /// 그 내장 렌즈가 가려져 있어서, 자동에 맡기면 새까만 화면만 본다.
+    private var cameraPicker: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker(T("카메라", "Camera"), selection: $settings.preferredCameraID) {
+                Text(T("자동 (내장 카메라 우선)", "Automatic (built-in first)"))
+                    .tag(String?.none)
+                ForEach(cameras, id: \.uniqueID) { device in
+                    Text(device.localizedName).tag(String?.some(device.uniqueID))
+                }
+                // 고른 장치가 지금 안 보여도 목록에서 지우지 않는다. 조용히
+                // '자동' 으로 돌아간 것처럼 보이면 설정이 안 먹는다고 오해한다.
+                if let id = settings.preferredCameraID,
+                   !cameras.contains(where: { $0.uniqueID == id }) {
+                    Text(T("연결되지 않음 — \(settings.preferredCameraName ?? id)",
+                           "Not connected — \(settings.preferredCameraName ?? id)"))
+                        .foregroundStyle(.secondary)
+                        .tag(String?.some(id))
+                }
+            }
+            .onChange(of: settings.preferredCameraID) { _, id in
+                settings.preferredCameraName = cameras.first { $0.uniqueID == id }?.localizedName
+            }
+
+            Text(T("고르는 즉시 바뀝니다. 그 카메라가 잠금 화면에서 안 보이면 내장 카메라로 되돌아갑니다.",
+                   "Takes effect immediately. If that camera is missing at lock time, it falls back to the built-in one."))
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: 업데이트
+
+    private var updateSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(T("업데이트", "Updates")).font(.headline)
+
+            HStack {
+                Text(T("현재 버전 \(Self.appVersion)", "Version \(Self.appVersion)"))
+                Spacer()
+                if updates.isChecking {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(T("지금 확인", "Check now")) { updates.checkNow() }
+                }
+            }
+
+            if let release = updates.available {
+                HStack {
+                    Text(T("새 버전 \(release.version) 이 나왔습니다.",
+                           "Version \(release.version) is available."))
+                    Spacer()
+                    Button(T("이 버전 넘기기", "Skip")) { updates.skipAvailable() }
+                    Button(T("받으러 가기", "Get it")) { updates.openReleasePage() }
+                }
+            } else if let at = updates.lastCheckedAt {
+                Text(T("마지막 확인 \(at.formatted(date: .abbreviated, time: .shortened)) — 최신입니다.",
+                       "Last checked \(at.formatted(date: .abbreviated, time: .shortened)) — up to date."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Toggle(T("자동으로 확인", "Check automatically"), isOn: $settings.checkForUpdates)
+
+            // 무엇이 오가는지 숨기지 않는다. 잠금 해제 도구가 밖으로 요청을
+            // 보낸다면 사용자는 그게 무엇인지 알 자격이 있다.
+            Text(T("""
+            하루 한 번 GitHub 릴리스 페이지에 인증 없는 요청을 하나 보내 최신 버전 번호만 \
+            읽어옵니다. 계정 정보·얼굴·사용 기록은 보내지 않으며, GitHub 서버가 알 수 있는 \
+            것은 접속 IP뿐입니다. 내려받기와 설치는 사용자가 직접 합니다.
+            """, """
+            Once a day this fetches the latest version number with a single unauthenticated \
+            request to GitHub. No account details, faces or usage data are sent — GitHub sees \
+            only your IP address. Downloading and installing stays up to you.
+            """))
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
