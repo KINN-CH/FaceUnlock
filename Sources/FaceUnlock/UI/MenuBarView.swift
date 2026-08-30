@@ -9,11 +9,19 @@ struct MenuBarView: View {
     var body: some View {
         Text(state.status.label)
 
-        // 새 버전이 있을 때만 줄이 하나 는다. 평소에는 메뉴가 그대로다.
-        if let release = updates.available {
+        // 확인이 끝났을 때만 한 줄 는다. 확인 전이거나 실패했으면(오프라인,
+        // 자동 확인 꺼둠) 아무 말도 하지 않는다 — 모르는 것을 '최신입니다' 라고
+        // 말하면 거짓말이 된다.
+        switch updates.result {
+        case .newer(let release):
             Button(T("새 버전 \(release.version) 받기", "Get version \(release.version)")) {
                 updates.openReleasePage()
             }
+        case .upToDate:
+            Text(T("최신 버전입니다 (\(updates.currentVersion))",
+                   "Up to date (\(updates.currentVersion))"))
+        case .never, .failed, .skipped:
+            EmptyView()
         }
 
         Divider()

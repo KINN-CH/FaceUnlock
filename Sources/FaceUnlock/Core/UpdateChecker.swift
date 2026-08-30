@@ -25,10 +25,30 @@ final class UpdateChecker: ObservableObject {
 
     static let shared = UpdateChecker()
 
-    /// 지금 버전보다 새 릴리스가 있을 때만 채워진다.
-    @Published private(set) var available: ReleaseInfo?
+    /// 마지막 확인이 무엇으로 끝났는가.
+    ///
+    /// `lastCheckedAt` 만으로는 부족하다. 그 값은 **실패해도** 갱신되기 때문에,
+    /// 시각만 보고 "최신입니다" 라고 말하면 오프라인일 때 거짓말이 된다.
+    enum CheckResult {
+        /// 아직 확인한 적 없음 (자동 확인을 꺼둔 경우 포함).
+        case never
+        case upToDate
+        case newer(ReleaseInfo)
+        /// 오프라인·요청 한도 초과 등. 사용자를 붙잡지 않고 조용히 둔다.
+        case failed
+        /// 새 버전이 있지만 사용자가 넘어가겠다고 했다.
+        case skipped
+    }
+
+    @Published private(set) var result: CheckResult = .never
     @Published private(set) var lastCheckedAt: Date?
     @Published private(set) var isChecking = false
+
+    /// 새 릴리스가 있을 때만 채워진다.
+    var available: ReleaseInfo? {
+        if case .newer(let release) = result { return release }
+        return nil
+    }
 
     /// 실행 중인 버전. 설정 화면에 그대로 보여준다.
     let currentVersion: String
@@ -45,12 +65,27 @@ final class UpdateChecker: ObservableObject {
     private enum Key {
         static let lastChecked = "lastUpdateCheck"
         static let skipped     = "skippedVersion"
+        static let knownLatest = "lastKnownLatestVersion"
     }
 
     private init() {
         currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
             ?? "0.0.0"
-        lastCheckedAt = UserDefaults.standard.object(forKey: Key.lastChecked) as? Date
+        let defaults = UserDefaults.standard
+        lastCheckedAt = defaults.object(forKey: Key.lastChecked) as? Date
+
+        // 지난 실행에서 알아낸 결과를 되살린다. 이게 없으면 앱을 다시 켤 때마다
+        // '모름' 으로 돌아가는데, 확인은 하루 한 번뿐이라 그 상태가 하루를 간다.
+        // 새 버전 알림도 재시작 한 번에 사라져 버린다.
+        if lastCheckedAt != nil, let known = defaults.string(forKey: Key.knownLatest) {
+            if !Self.isNewer(known, than: currentVersion) {
+                result = .upToDate
+            } else if defaults.string(forKey: Key.skipped) == known {
+                result = .skipped
+            } else {
+                result = .newer(ReleaseInfo(version: known, url: Self.releasesPage))
+            }
+        }
     }
 
     // MARK: 확인
@@ -58,6 +93,12 @@ final class UpdateChecker: ObservableObject {
     /// 앱 시작과 하루 한 번. 설정이 꺼져 있으면 아무것도 하지 않는다.
     func checkIfDue() {
         guard Settings.shared.checkForUpdates else { return }
+        // 지난 결과를 모르면 간격과 상관없이 한 번 본다. 안 그러면 이 기능이 처음
+        // 들어간 버전에서 메뉴가 하루 동안 아무 말도 하지 않는다.
+        if case .never = result {
+            check(manual: false)
+            return
+        }
         if let last = lastCheckedAt, Date().timeIntervalSince(last) < interval { return }
         check(manual: false)
     }
@@ -80,11 +121,15 @@ final class UpdateChecker: ObservableObject {
 
             // 실패(오프라인, 요청 한도 초과)는 조용히 넘긴다. 잠금 해제 도구가
             // 네트워크 오류 창으로 사용자를 붙잡을 이유가 없다.
-            guard let latest else { return }
+            guard let latest else {
+                result = .failed
+                return
+            }
+            UserDefaults.standard.set(latest.version, forKey: Key.knownLatest)
 
             guard Self.isNewer(latest.version, than: currentVersion) else {
                 Log.app.info("최신 버전을 쓰고 있습니다 (\(self.currentVersion, privacy: .public))")
-                available = nil
+                result = .upToDate
                 return
             }
 
@@ -92,12 +137,12 @@ final class UpdateChecker: ObservableObject {
             // 직접 확인 버튼을 눌렀을 때는 그 결정을 무시하고 보여준다.
             let skipped = UserDefaults.standard.string(forKey: Key.skipped)
             if !manual, skipped == latest.version {
-                available = nil
+                result = .skipped
                 return
             }
 
             Log.app.info("새 버전이 있습니다: \(latest.version, privacy: .public)")
-            available = latest
+            result = .newer(latest)
         }
     }
 
@@ -111,7 +156,8 @@ final class UpdateChecker: ObservableObject {
     func skipAvailable() {
         guard let version = available?.version else { return }
         UserDefaults.standard.set(version, forKey: Key.skipped)
-        available = nil
+        // '최신입니다' 로 바꾸지 않는다 — 넘긴 것이지 최신인 게 아니다.
+        result = .skipped
     }
 
     // MARK: 내부

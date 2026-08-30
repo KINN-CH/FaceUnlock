@@ -433,9 +433,9 @@ struct SettingsView: View {
                     Button(T("받으러 가기", "Get it")) { updates.openReleasePage() }
                 }
             } else if let at = updates.lastCheckedAt {
-                Text(T("마지막 확인 \(at.formatted(date: .abbreviated, time: .shortened)) — 최신입니다.",
-                       "Last checked \(at.formatted(date: .abbreviated, time: .shortened)) — up to date."))
-                    .font(.caption).foregroundStyle(.secondary)
+                // 확인 시각만 보고 '최신입니다' 라고 쓰면 안 된다. 그 시각은
+                // 오프라인으로 실패했을 때도 갱신된다.
+                Text(lastCheckLine(at)).font(.caption).foregroundStyle(.secondary)
             }
 
             Toggle(T("자동으로 확인", "Check automatically"), isOn: $settings.checkForUpdates)
@@ -629,6 +629,23 @@ struct SettingsView: View {
         .font(.caption2)
         .foregroundStyle(.tertiary)
         .frame(maxWidth: .infinity)
+    }
+
+    /// 마지막 확인의 결말을 그대로 적는다.
+    private func lastCheckLine(_ at: Date) -> String {
+        let when = at.formatted(date: .abbreviated, time: .shortened)
+        switch updates.result {
+        case .upToDate:
+            return T("마지막 확인 \(when) — 최신입니다.", "Last checked \(when) — up to date.")
+        case .failed:
+            return T("마지막 확인 \(when) — 확인하지 못했습니다.",
+                     "Last checked \(when) — couldn’t check.")
+        case .skipped:
+            return T("마지막 확인 \(when) — 넘어간 버전이 있습니다.",
+                     "Last checked \(when) — a version was skipped.")
+        case .never, .newer:
+            return T("마지막 확인 \(when)", "Last checked \(when)")
+        }
     }
 
     private static let appVersion =
