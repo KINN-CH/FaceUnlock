@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FaceUnlock — face unlock for MacBooks without Touch ID</title>
+<meta name="description" content="Look at your MacBook and the lock screen opens. A free open-source menu bar app that recognizes your face and types your password. Runs entirely on your Mac — your face never leaves the machine.">
+<link rel="canonical" href="https://kinn-ch.github.io/FaceUnlock/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://kinn-ch.github.io/FaceUnlock/">
+<meta property="og:title" content="FaceUnlock — face unlock for MacBooks without Touch ID">
+<meta property="og:description" content="Look at your MacBook and the lock screen opens. Free, open source, runs entirely on your Mac.">
+<meta property="og:image" content="https://kinn-ch.github.io/FaceUnlock/banner.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0B111D">
+<link rel="icon" href="banner.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "FaceUnlock",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "macOS 14 or later, Apple Silicon",
+  "url": "https://kinn-ch.github.io/FaceUnlock/",
+  "downloadUrl": "https://github.com/KINN-CH/FaceUnlock/releases/latest",
+  "license": "https://opensource.org/licenses/MIT",
+  "description": "A menu bar app that unlocks the macOS lock screen by recognizing your face. Runs entirely on device.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<style>
+  /* 배너(docs/banner.png)에서 뽑은 색을 그대로 쓴다. 이 페이지와 배너와 앱
+     아이콘이 같은 팔레트여야 링크를 공유했을 때 하나로 읽힌다.
+     이 페이지는 다크 한 벌만 만든다 — 주제가 꺼진 잠금 화면이다. */
+  :root {
+    --ground:    #0B111D;
+    --raised:    #131C2E;
+    --raised-2:  #172136;
+    --line:      #22314F;
+    --accent:    #678FEF;
+    --accent-lo: #253A80;
+    --accent-tx: #96B5FB;
+    --tx:        #EDF0F6;
+    --tx-2:      #C3CAD8;
+    --tx-3:      #8A93A6;
+    --warn:      #E8B75C;
+
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+            "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+    --w: 46rem;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--tx);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* 아이콘 뒤 글로우. 배너와 같은 자리에서 같은 색으로 번지게 한다. */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    background: radial-gradient(60rem 40rem at 50% -8rem, #1E2C4A 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  main, header, footer { position: relative; z-index: 1; }
+
+  .wrap { width: min(100% - 2.5rem, var(--w)); margin-inline: auto; }
+
+  a { color: var(--accent-tx); text-decoration-color: color-mix(in srgb, var(--accent-tx) 40%, transparent); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: var(--accent-tx); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+  h1, h2, h3 { text-wrap: balance; line-height: 1.2; margin: 0; letter-spacing: -0.015em; }
+  p { margin: 0; }
+
+  /* ── hero ─────────────────────────────────────────────── */
+  header { padding: 3.5rem 0 1rem; text-align: center; }
+  header img.banner {
+    display: block; width: 100%; height: auto; max-width: 38rem;
+    margin: 0 auto 2.25rem; border-radius: 14px;
+    border: 1px solid var(--line);
+  }
+  h1 { font-size: clamp(1.9rem, 5.2vw, 2.7rem); font-weight: 700; }
+  .tagline { margin-top: 1rem; font-size: clamp(1.05rem, 2.6vw, 1.2rem); color: var(--tx-2); }
+  .tagline strong { color: var(--tx); font-weight: 600; }
+
+  .cta { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; margin-top: 2rem; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.7rem 1.35rem; border-radius: 10px;
+    font-size: 1rem; font-weight: 600; text-decoration: none;
+    border: 1px solid var(--line); color: var(--tx); background: var(--raised);
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  }
+  .btn:hover { background: var(--raised-2); border-color: var(--accent-lo); transform: translateY(-1px); }
+  .btn-primary {
+    background: linear-gradient(180deg, var(--accent) 0%, #4B6FD8 100%);
+    border-color: #3A5CC4; color: #08101F;
+  }
+  .btn-primary:hover { background: linear-gradient(180deg, #7A9BF3 0%, #5478DE 100%); border-color: #4B6FD8; }
+  .smallprint { margin-top: 1.1rem; font-size: 0.83rem; color: var(--tx-3); }
+
+  /* ── sections ─────────────────────────────────────────── */
+  section { padding: 3.25rem 0; }
+  section + section { border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+  h2 { font-size: 1.45rem; font-weight: 650; margin-bottom: 0.4rem; }
+  .lede { color: var(--tx-3); font-size: 0.95rem; margin-bottom: 1.75rem; }
+
+  /* ── the sequence (실제 순서라서 번호를 붙인다) ────────── */
+  ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6rem; counter-reset: s; }
+  /* 번호는 흐름에서 빼둔다. 그리드 칸에 넣으면 <b> 와 <span> 이 서로 다른
+     칸으로 흩어져 두 번째 줄이 한 글자씩 접힌다. */
+  ol.steps li {
+    counter-increment: s;
+    position: relative;
+    padding: 0.85rem 1.15rem 0.85rem 3rem;
+    background: var(--raised); border: 1px solid var(--line); border-radius: 10px;
+  }
+  ol.steps li::before {
+    content: counter(s);
+    position: absolute; left: 1.15rem; top: 0.85rem;
+    font-family: var(--mono); font-size: 0.8rem; color: var(--accent-tx);
+    font-variant-numeric: tabular-nums; line-height: 1.65;
+  }
+  ol.steps b { font-weight: 600; }
+  ol.steps span { color: var(--tx-2); }
+
+  /* ── honesty pair ─────────────────────────────────────── */
+  .pair { display: grid; gap: 1rem; grid-template-columns: 1fr; }
+  @media (min-width: 40rem) { .pair { grid-template-columns: 1fr 1fr; } }
+  .card { padding: 1.35rem 1.4rem; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; }
+  .card.caution { border-color: color-mix(in srgb, var(--warn) 32%, var(--line)); }
+  .card h3 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--tx-3); margin-bottom: 0.85rem; }
+  .card.caution h3 { color: var(--warn); }
+  .card ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.55rem; }
+  .card li { color: var(--tx-2); font-size: 0.95rem; }
+  .card li b { color: var(--tx); font-weight: 600; }
+
+  /* ── code ─────────────────────────────────────────────── */
+  pre {
+    margin: 0; padding: 1rem 1.15rem; overflow-x: auto;
+    background: #080D16; border: 1px solid var(--line); border-radius: 10px;
+    font-family: var(--mono); font-size: 0.86rem; line-height: 1.7; color: var(--tx-2);
+  }
+  pre .c { color: var(--tx-3); }
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--raised-2); padding: 0.1em 0.4em; border-radius: 5px; color: var(--tx); }
+
+  .note { margin-top: 1rem; padding: 0.9rem 1.1rem; border-left: 2px solid var(--warn); background: color-mix(in srgb, var(--warn) 7%, transparent); border-radius: 0 8px 8px 0; font-size: 0.93rem; color: var(--tx-2); }
+
+  /* ── pipeline ─────────────────────────────────────────── */
+  .pipe { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; font-family: var(--mono); font-size: 0.82rem; }
+  .pipe span { padding: 0.35rem 0.7rem; background: var(--raised); border: 1px solid var(--line); border-radius: 7px; color: var(--tx-2); white-space: nowrap; }
+  .pipe i { color: var(--tx-3); font-style: normal; }
+
+  p + p { margin-top: 0.9rem; }
+  .body-tx { color: var(--tx-2); }
+
+  /* ── korean ───────────────────────────────────────────── */
+  #korean { }
+  #korean h2 { margin-bottom: 1.25rem; }
+  #korean p { color: var(--tx-2); }
+  .kr-lines { display: grid; gap: 0.9rem; }
+
+  footer { padding: 2.5rem 0 4rem; border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent); color: var(--tx-3); font-size: 0.85rem; }
+  footer .links { display: flex; flex-wrap: wrap; gap: 1.1rem; margin-bottom: 1.25rem; }
+  footer p + p { margin-top: 0.6rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <img class="banner" src="banner.png" alt="FaceUnlock — face unlock for the Mac lock screen">
+  <h1>Face unlock for MacBooks<br>that have no Touch ID</h1>
+  <p class="tagline">
+    <strong>Look at your Mac and the lock screen opens.</strong><br>
+    A menu bar app that recognizes your face and types your password for you.<br>
+    It all runs on the machine — your face never leaves your Mac.
+  </p>
+  <div class="cta">
+    <a class="btn btn-primary" href="https://github.com/KINN-CH/FaceUnlock/releases/latest">Download the DMG</a>
+    <a class="btn" href="https://github.com/KINN-CH/FaceUnlock">View source on GitHub</a>
+  </div>
+  <p class="smallprint">Free · MIT · macOS 14+ · Apple Silicon · not notarized, so macOS will ask twice</p>
+</header>
+
+<main>
+
+<section class="wrap">
+  <h2>The whole interaction</h2>
+  <p class="lede">Four steps, about a second and a half. Nothing to press.</p>
+  <ol class="steps">
+    <li><b>You walk up to a locked Mac.</b> <span>The camera is already warm — it starts streaming the moment the screen locks.</span></li>
+    <li><b>It recognizes you.</b> <span>Vision finds the face, ArcFace turns it into 512 numbers, and those are compared against the faces you registered.</span></li>
+    <li><b>You blink.</b> <span>A printed photo can't do this. It's the reason a picture of you doesn't open your Mac.</span></li>
+    <li><b>The lock screen opens.</b> <span>Your password is decrypted inside the Secure Enclave and typed for you.</span></li>
+  </ol>
+</section>
+
+<section class="wrap">
+  <h2>What it is, and what it isn't</h2>
+  <p class="lede">The name is close to Apple's. The thing is not. Both columns are worth reading before you install it.</p>
+  <div class="pair">
+    <div class="card">
+      <h3>What it does</h3>
+      <ul>
+        <li><b>Opens the macOS lock screen</b> when the camera recognizes you.</li>
+        <li><b>Runs entirely on your Mac.</b> No account, no server, no telemetry.</li>
+        <li><b>Seals your password with the Secure Enclave.</b> Copy it to another Mac and it becomes unreadable.</li>
+        <li><b>Works with any camera</b> — built in, or an external webcam you pick in Settings.</li>
+        <li><b>Builds without Xcode.</b> A Makefile and <code>swiftc</code>.</li>
+      </ul>
+    </div>
+    <div class="card caution">
+      <h3>What it is not</h3>
+      <ul>
+        <li><b>Not Apple's Face ID.</b> A 2D webcam can't measure depth. Face ID reads 30,000 infrared dots; this sees one flat image.</li>
+        <li><b>It stops photos, not videos.</b> A recording of you blinking, played on a phone, will open it. That needs a depth sensor, so it won't be fixed.</li>
+        <li><b>It doesn't cover the FileVault boot screen.</b> No app runs there.</li>
+        <li><b>Your password must stay decryptable.</b> It has to be usable from the lock screen, so it can't sit behind another secret.</li>
+        <li><b>It's a convenience, not a security control.</b> Treat it as one.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>Install</h2>
+  <p class="lede">Two ways. The second one is the honest recommendation.</p>
+
+  <h3 style="font-size:1rem;font-weight:650;margin-bottom:0.7rem;">From the DMG</h3>
+  <ol class="steps">
+    <li><b>Open the DMG</b> <span>and drag FaceUnlock to Applications.</span></li>
+    <li><b>Right-click 설치 도우미 (Install Helper).command → Open.</b> <span>macOS blocks it. Go to System Settings → Privacy &amp; Security → Open Anyway, then do it again.</span></li>
+    <li><b>Let the Terminal window finish.</b> <span>It clears the quarantine flag, downloads and converts the face model, and launches the app.</span></li>
+  </ol>
+  <div class="note">
+    Being blocked twice is normal — the app isn't notarized, because notarization needs a paid Apple Developer account. Going through that dance for an unsigned app from a stranger is a genuinely risky habit. If you'd rather not, build it yourself. That's why the source is public.
+  </div>
+
+  <h3 style="font-size:1rem;font-weight:650;margin:2rem 0 0.7rem;">From source</h3>
+<pre><span class="c"># macOS 14+, Apple Silicon, Command Line Tools</span>
+git clone https://github.com/KINN-CH/FaceUnlock.git
+cd FaceUnlock
+make model      <span class="c"># converts the ArcFace model to Core ML</span>
+make install && open -a /Applications/FaceUnlock.app</pre>
+  <p class="body-tx" style="margin-top:1rem;font-size:0.93rem;">
+    The face model isn't in the repo and isn't in the DMG. The ArcFace weights are under
+    InsightFace's non-commercial research license, so they're fetched from the official
+    release at install time.
+  </p>
+</section>
+
+<section class="wrap">
+  <h2>How it works</h2>
+  <p class="lede">Every stage runs locally, on the Neural Engine or the CPU.</p>
+  <div class="pipe">
+    <span>camera frame</span><i>→</i>
+    <span>Vision face detect</span><i>→</i>
+    <span>align to 112×112</span><i>→</i>
+    <span>ArcFace 512-d</span><i>→</i>
+    <span>cosine match</span><i>→</i>
+    <span>blink check</span><i>→</i>
+    <span>type password</span>
+  </div>
+  <p class="body-tx" style="margin-top:1.5rem;">
+    Registered faces are stored as embeddings — 512 numbers — not as pictures. They're sealed
+    with a key that only exists inside this Mac's Secure Enclave, in
+    <code>~/Library/Application Support/FaceUnlock/</code>.
+  </p>
+  <p class="body-tx">
+    The only thing that ever leaves the machine is an optional once-a-day check for a new
+    release: one unauthenticated GET to GitHub, which sees your IP address and nothing else.
+    It exists because v0.1.0 through v0.1.4 shipped a bug that left the camera black on the
+    lock screen, and there was no way to reach the people running them. Settings → Updates
+    turns it off, and with it off no request is made at all.
+  </p>
+</section>
+
+<section class="wrap">
+  <h2>Does it work on your MacBook?</h2>
+  <p class="body-tx">
+    This has been properly verified on exactly one machine — the one it was written on.
+    Whether it works anywhere else is the thing its author most wants to know. If you try it,
+    a one-line report either way is genuinely useful.
+  </p>
+  <div class="cta" style="justify-content:flex-start;margin-top:1.5rem;">
+    <a class="btn" href="https://github.com/KINN-CH/FaceUnlock/discussions/1">Tell us on Discussions</a>
+    <a class="btn" href="https://github.com/KINN-CH/FaceUnlock">Star it on GitHub</a>
+  </div>
+</section>
+
+<section class="wrap" id="korean">
+  <h2>한국어</h2>
+  <div class="kr-lines">
+    <p><b style="color:var(--tx)">맥북 잠금 화면을 얼굴로 여는 메뉴바 앱입니다.</b> 카메라가 얼굴을 알아보면 잠금 화면을 대신 풀어줍니다. Touch ID 없는 맥북을 쓰다가 직접 만들었습니다.</p>
+    <p>모든 처리가 맥 안에서 끝납니다. 계정도, 서버도, 수집도 없습니다. 등록한 얼굴은 사진이 아니라 512개의 숫자로 저장되고, 이 맥의 Secure Enclave 안에만 있는 키로 봉인됩니다.</p>
+    <p><b style="color:var(--warn)">애플의 Face ID 가 아닙니다.</b> 웹캠은 깊이를 재지 못합니다. 눈 깜빡임을 확인하기 때문에 인쇄된 사진으로는 열리지 않지만, 깜빡이는 영상을 휴대폰으로 재생하면 열립니다. 깊이 센서 없이는 해결되지 않아 고칠 계획이 없습니다. 편의 기능이지 보안 장치가 아닙니다.</p>
+    <p>FileVault 부팅 화면은 다루지 못합니다. 로그인 이후의 잠금 화면만 해당됩니다.</p>
+    <p>공증을 받지 않아 설치할 때 macOS 가 두 번 막습니다. 정상입니다. 내키지 않으시면 소스에서 직접 빌드하시면 됩니다 — 저장소를 공개해 둔 이유입니다.</p>
+    <p style="margin-top:0.4rem;"><a href="https://github.com/KINN-CH/FaceUnlock#한국어">한국어 문서 전문 →</a></p>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  <div class="links">
+    <a href="https://github.com/KINN-CH/FaceUnlock">Source</a>
+    <a href="https://github.com/KINN-CH/FaceUnlock/releases/latest">Releases</a>
+    <a href="https://github.com/KINN-CH/FaceUnlock/discussions">Discussions</a>
+    <a href="https://github.com/KINN-CH/FaceUnlock/blob/main/SECURITY.md">Security</a>
+    <a href="https://github.com/KINN-CH/FaceUnlock/blob/main/LICENSE">MIT License</a>
+  </div>
+  <p>Provided with no warranty of any kind.</p>
+  <p>Apple, Mac, MacBook, macOS, Face ID and Touch ID are trademarks of Apple Inc. This project is not affiliated with, endorsed by, or sponsored by Apple Inc.</p>
+  <p>Face recognition uses ArcFace weights from InsightFace, which are licensed for non-commercial research use only and are downloaded separately at install time.</p>
+</footer>
+
+</body>
+</html>

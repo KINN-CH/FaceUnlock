@@ -25,7 +25,7 @@ It all runs on the machine — your face never leaves your Mac.
 
 ### [⬇︎ Download the latest DMG](https://github.com/KINN-CH/FaceUnlock/releases/latest)
 
-**[English](#english) · [한국어](#한국어)**
+**[English](#english) · [한국어](#한국어) · [Website](https://kinn-ch.github.io/FaceUnlock/)**
 
 </div>
 
