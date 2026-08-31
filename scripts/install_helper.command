@@ -87,21 +87,37 @@ else
     say "    비상업 연구용 라이선스입니다. 업무용 기기에 설치하신다면 먼저 라이선스를 확인해 주세요." \
         "    It is licensed for non-commercial research only — check the license first if this is a work machine."
 
-    # coremltools 가 Python 3.13+ 를 아직 지원하지 않는다.
+    # coremltools 는 Python 3.9~3.12 만 지원한다 (3.13+ 아직 안 됨).
+    # 맥에 기본으로 있는 /usr/bin/python3 (3.9) 로도 전부 설치되므로,
+    # 이름이 아니라 실제 버전을 물어보고 범위에 드는 첫 번째를 쓴다.
+    # 예전에는 Homebrew 의 3.11/3.12 만 찾아서, Homebrew 가 없는 사람은
+    # 기본 파이썬이 멀쩡히 있는데도 설치가 통째로 막혔다.
+    py_ok() {
+        [ -n "$1" ] && [ -x "$1" ] || return 1
+        "$1" -c 'import sys; sys.exit(0 if (3,9) <= sys.version_info < (3,13) else 1)' \
+            >/dev/null 2>&1
+    }
+
     find_python() {
         PY=""
         for candidate in \
             /opt/homebrew/opt/python@3.12/bin/python3.12 \
             /opt/homebrew/opt/python@3.11/bin/python3.11 \
             "$(command -v python3.12 || true)" \
-            "$(command -v python3.11 || true)"
+            "$(command -v python3.11 || true)" \
+            "$(command -v python3.10 || true)" \
+            "$(command -v python3.9 || true)" \
+            /usr/bin/python3 \
+            "$(command -v python3 || true)"
         do
-            if [ -n "$candidate" ] && [ -x "$candidate" ]; then PY="$candidate"; return 0; fi
+            if py_ok "$candidate"; then PY="$candidate"; return 0; fi
         done
         return 1
     }
 
     if ! find_python; then
+        # 여기까지 왔다면 맥의 기본 파이썬조차 못 쓰는 경우다. 대개는 명령어
+        # 도구(Command Line Tools)가 없어서인데, 그건 Homebrew 보다 가볍다.
         BREW="$(command -v brew || true)"
         [ -z "$BREW" ] && [ -x /opt/homebrew/bin/brew ] && BREW=/opt/homebrew/bin/brew
         if [ -n "$BREW" ]; then
@@ -118,10 +134,16 @@ else
             find_python || { fail "Python 설치 후에도 찾지 못했습니다." \
                                   "Python still not found after installing."; exit 1; }
         else
-            fail "Python 3.11/3.12 와 Homebrew 가 모두 없습니다.
-      https://brew.sh 에서 Homebrew 설치 후 이 파일을 다시 실행해 주세요." \
-                 "Neither Python 3.11/3.12 nor Homebrew was found.
-      Install Homebrew from https://brew.sh, then run this file again."
+            fail "쓸 수 있는 Python (3.9~3.12) 을 찾지 못했습니다.
+      터미널에 아래 한 줄을 붙여넣어 애플 명령어 도구를 설치한 뒤,
+      이 파일을 다시 실행해 주세요.
+
+          xcode-select --install" \
+                 "No usable Python (3.9-3.12) was found.
+      Paste this line into Terminal to install Apple's command line tools,
+      then run this file again.
+
+          xcode-select --install"
             exit 1
         fi
     fi
