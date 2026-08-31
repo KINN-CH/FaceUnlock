@@ -94,9 +94,17 @@ else
     # 기본 파이썬이 멀쩡히 있는데도 설치가 통째로 막혔다.
     py_ok() {
         [ -n "$1" ] && [ -x "$1" ] || return 1
+        # /usr/bin/python3 는 진짜 파이썬이 아니라 xcrun 스텁이다(/usr/bin/git 과
+        # 같은 파일). 명령어 도구가 없는 맥에서 이걸 실행하면 설치하겠냐는 창이
+        # 불쑥 뜬다. 아래에서 설명하고 물어볼 참이니 여기서는 건드리지 않는다.
+        case "$1" in
+            /usr/bin/*) has_clt || return 1 ;;
+        esac
         "$1" -c 'import sys; sys.exit(0 if (3,9) <= sys.version_info < (3,13) else 1)' \
             >/dev/null 2>&1
     }
+
+    has_clt() { xcode-select -p >/dev/null 2>&1; }
 
     find_python() {
         PY=""
@@ -133,17 +141,49 @@ else
             esac
             find_python || { fail "Python 설치 후에도 찾지 못했습니다." \
                                   "Python still not found after installing."; exit 1; }
+        elif ! has_clt; then
+            # 완전히 새 맥이면 여기로 온다. 애플 명령어 도구 안에 파이썬이
+            # 들어 있으므로 그것만 깔면 된다 — Homebrew 보다 가볍고, 애플이
+            # 직접 배포하는 것이라 받으시는 분 입장에서도 덜 찜찜하다.
+            echo ""
+            say "    얼굴 인식 모델을 변환하려면 파이썬이 필요한데, 이 맥에는 아직 없습니다." \
+                "    Converting the model needs Python, which this Mac doesn't have yet."
+            say "    애플이 배포하는 '명령어 도구(Command Line Tools)' 에 들어 있습니다." \
+                "    It comes with Apple's Command Line Tools."
+            read -r -p                 "    지금 설치할까요? / Install it now? [Y/n] " reply
+            case "$reply" in
+                [nN]*) say "    설치를 중단합니다. 나중에 터미널에서 xcode-select --install 후 다시 실행해 주세요." \
+                           "    Aborting. Run xcode-select --install later, then run this file again."
+                       exit 1 ;;
+            esac
+
+            xcode-select --install >/dev/null 2>&1 || true
+            say "    애플 설치 창이 떴습니다. '설치' 를 눌러 끝날 때까지 기다려 주세요." \
+                "    Apple's installer has opened. Click Install and let it finish."
+            say "    (이 창은 그대로 두시면 됩니다 — 끝나면 알아서 이어집니다)" \
+                "    (Leave this window open — it continues on its own when done)"
+
+            # 설치 프로그램은 바로 반환된다. 끝날 때까지 기다린다. 용량이 커서
+            # 회선에 따라 오래 걸리므로 30분까지 본다.
+            waited=0
+            while [ "$waited" -lt 1800 ]; do
+                if has_clt && find_python; then break; fi
+                sleep 10
+                waited=$((waited + 10))
+                printf "."
+            done
+            echo ""
+
+            find_python || { fail "명령어 도구 설치를 확인하지 못했습니다.
+      설치를 마치신 뒤 이 파일을 다시 실행해 주세요." \
+                                  "Could not confirm the tools were installed.
+      Finish the install, then run this file again."; exit 1; }
         else
             fail "쓸 수 있는 Python (3.9~3.12) 을 찾지 못했습니다.
-      터미널에 아래 한 줄을 붙여넣어 애플 명령어 도구를 설치한 뒤,
-      이 파일을 다시 실행해 주세요.
-
-          xcode-select --install" \
+      터미널에서 xcode-select --install 로 애플 명령어 도구를 설치한 뒤
+      이 파일을 다시 실행해 주세요." \
                  "No usable Python (3.9-3.12) was found.
-      Paste this line into Terminal to install Apple's command line tools,
-      then run this file again.
-
-          xcode-select --install"
+      Run xcode-select --install in Terminal, then run this file again."
             exit 1
         fi
     fi
