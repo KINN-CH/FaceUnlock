@@ -452,6 +452,13 @@ final class AppState: ObservableObject {
 
         guard !alreadyOpen else { return }
         Log.app.info("인식 창 열림 — \(reason, privacy: .public)")
+
+        // 카메라 첫 프레임까지 약 1초가 걸린다. 그동안 잠금화면은 시계만
+        // 보여주므로 사용자 눈에는 아무 일도 일어나지 않는 것처럼 보인다.
+        // 비밀번호 칸을 지금 띄워두면 그 1초가 "반응 없는 화면" 이 아니게 된다.
+        // 키 이벤트에는 짧은 sleep 이 들어 있어 메인 스레드에서 부르지 않는다.
+        DispatchQueue.global(qos: .userInitiated).async { Unlocker.summonPasswordField() }
+
         startAttempt()
         retryTimer?.invalidate()
         retryTimer = Timer.scheduledTimer(withTimeInterval: retryInterval, repeats: true) { [weak self] _ in
@@ -542,11 +549,11 @@ final class AppState: ObservableObject {
     /// 앉아 있었다.
     private func anyDisplayAwake() -> Bool {
         var count: UInt32 = 0
-        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
-            // 목록을 못 얻었다. 여기서 "꺼졌다" 로 넘어가면 얼굴 인식이 통째로
-            // 멈추므로, 판단 불가는 켜져 있는 쪽으로 센다.
-            return true
-        }
+        // 호출 실패와 "켜진 화면 0개" 를 나눈다 — [CameraSession.anyDisplayAwake] 참조.
+        // 목록을 못 얻은 것은 판단 불가라 켜진 쪽으로 세지만, 목록이 비었다는 건
+        // 켜진 화면이 없다는 **답** 이다. 덮개를 닫으면 실제로 0 이 나온다.
+        guard CGGetActiveDisplayList(0, nil, &count) == .success else { return true }
+        guard count > 0 else { return false }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return true }
         return ids.prefix(Int(count)).contains { CGDisplayIsAsleep($0) == 0 }

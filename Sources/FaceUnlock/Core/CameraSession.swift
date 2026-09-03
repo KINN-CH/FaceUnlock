@@ -516,7 +516,15 @@ final class CameraSession: NSObject {
     /// 진짜 먹통이 된 장치를 복구하지 않고 넘어가게 된다.
     private static func anyDisplayAwake() -> Bool {
         var count: UInt32 = 0
-        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return true }
+        // 호출이 실패한 것과 "켜진 화면이 0개" 인 것은 전혀 다른 사건인데
+        // 예전에는 둘을 한 줄에서 같이 처리하고 둘 다 "켜져 있다" 로 셌다.
+        // 맥북 덮개를 닫으면 내장 화면이 목록에서 아예 빠져 count 가 0 이 되고,
+        // 그래서 화면이 자는 동안 위의 가드가 한 번도 걸리지 않았다.
+        // 실측 로그에 그 결과가 그대로 남아 있다 —
+        //   "시작 후 첫 프레임이 오지 않습니다 (디스플레이 알 수 없음, 화면 잠김)"
+        // 가 세 번 찍히고 재개방 예산을 다 태운 뒤 포기한다.
+        guard CGGetActiveDisplayList(0, nil, &count) == .success else { return true }
+        guard count > 0 else { return false }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return true }
         return ids.prefix(Int(count)).contains { CGDisplayIsAsleep($0) == 0 }

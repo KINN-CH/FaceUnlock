@@ -38,6 +38,9 @@ enum Unlocker {
     private static let deleteKey: CGKeyCode = 51
     private static let aKey: CGKeyCode = 0
 
+    /// Shift. 글자를 넣지 않는 유일한 종류의 키라서 [summonPasswordField] 에 쓴다.
+    private static let shiftKey: CGKeyCode = 56
+
     /// Cmd+A 가 먹지 않았을 때를 대비한 지우개 횟수.
     ///
     /// 예전에는 32 번이었다. 한 번에 5ms 씩이라 그것만 160ms 였고, 그 시간이
@@ -124,6 +127,31 @@ enum Unlocker {
         Log.unlock.info("1회 재시도 — 이번에는 화면을 깨우고 넉넉히 기다립니다")
         Thread.sleep(forTimeInterval: 0.4)
         return unlock(allowRetry: false, cautious: true)
+    }
+
+    // MARK: 비밀번호 칸 미리 띄우기
+
+    /// 잠금화면의 비밀번호 칸을 **인식이 끝나기 전에** 미리 띄운다.
+    ///
+    /// 덮개를 열면 잠금화면은 시계만 보여주고, 아무 키나 눌러야 비밀번호 칸이
+    /// 나온다. 지금까지는 그 "아무 키" 역할을 주입 첫 머리의 Cmd+A 가 했다.
+    /// 그래서 칸이 뜨는 시점이 곧 얼굴 인식이 끝난 시점이었고, 카메라 첫
+    /// 프레임에 1초가 걸리는 만큼 사용자는 1초 동안 아무 반응 없는 화면을 봤다.
+    ///
+    /// 화면이 켜지는 순간 Shift 를 한 번 눌러주면 그 1초가 사라진다. 실제로
+    /// 빨라지는 건 아니지만 — 잠금이 풀리는 시각은 그대로다 — 누른 즉시
+    /// 반응하는 화면과 1초간 죽어 있는 화면은 체감이 전혀 다르다.
+    /// 덤으로 주입 시점에는 칸이 이미 떠 있으므로, 첫 Cmd+A 가 칸을 깨우는 데
+    /// 쓰여 사라지는 일도 없어진다.
+    ///
+    /// **Shift 를 쓰는 이유.** 글자를 넣지 않는 키라서 만에 하나 잠기지 않은
+    /// 화면으로 새어 나가도 아무 일도 일어나지 않는다. 그래도 아래에서 잠금
+    /// 상태를 먼저 확인한다 — 이 파일의 다른 주입과 같은 규칙이다.
+    static func summonPasswordField() {
+        guard LockMonitor.screenIsLockedNow() else { return }
+        guard Permissions.hasAccessibility else { return }
+        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+        tap(source: source, key: shiftKey)
     }
 
     // MARK: 디스플레이 깨우기
