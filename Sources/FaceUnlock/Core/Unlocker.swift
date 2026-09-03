@@ -48,8 +48,14 @@ enum Unlocker {
 
     /// 잠금 해제를 시도한다. 실패하면 1회만 재시도하고 그만둔다.
     /// 무한 재시도는 계정 잠금으로 이어질 수 있다.
+    ///
+    /// `cautious` 는 **재시도에서만** 켠다. 첫 시도가 실패했다는 건 잠금화면이
+    /// 아직 키를 받을 준비가 안 됐다는 뜻일 수 있으므로, 두 번째는 빠른 길을
+    /// 버리고 화면을 확실히 깨우고 넉넉히 기다린 뒤에 넣는다. 실측 로그에서
+    /// 첫 시도와 재시도가 **같은 조건으로** 연달아 실패한 적이 있는데
+    /// (16:55:49.6 / 16:55:51.2), 조건이 같으면 재시도가 새로 얻는 정보가 없다.
     @discardableResult
-    static func unlock(allowRetry: Bool = true) -> Result<Void, Failure> {
+    static func unlock(allowRetry: Bool = true, cautious: Bool = false) -> Result<Void, Failure> {
         // 잠금 확인이 가장 앞이다. 다른 가드보다 뒤에 두면 그 가드들이 먼저 반환할 때
         // 잠금 확인이 아예 실행되지 않아, 정작 제일 중요한 검사가 조건부가 되어버린다.
         guard LockMonitor.screenIsLockedNow() else {
@@ -71,7 +77,10 @@ enum Unlocker {
         // 예전에는 무조건 caffeinate 를 띄우고 0.2초를 기다렸는데, 그 0.2초는
         // 사용자가 눈앞에서 그대로 세는 시간이다. 그리고 얼굴이 일치했다는 건
         // 카메라가 프레임을 받고 있었다는 뜻이라 화면이 켜져 있는 쪽이 흔하다.
-        if anyDisplayAwake() {
+        if cautious {
+            wakeDisplay()
+            Thread.sleep(forTimeInterval: 0.4)
+        } else if anyDisplayAwake() {
             // 그래도 아주 짧게는 둔다. 켜졌다는 신호와 잠금화면이 키를 받을
             // 준비가 끝나는 시점이 정확히 같지는 않다.
             Thread.sleep(forTimeInterval: 0.05)
@@ -112,9 +121,9 @@ enum Unlocker {
             return .failure(.stillLocked)
         }
 
-        Log.unlock.info("1회 재시도")
+        Log.unlock.info("1회 재시도 — 이번에는 화면을 깨우고 넉넉히 기다립니다")
         Thread.sleep(forTimeInterval: 0.4)
-        return unlock(allowRetry: false)
+        return unlock(allowRetry: false, cautious: true)
     }
 
     // MARK: 디스플레이 깨우기
