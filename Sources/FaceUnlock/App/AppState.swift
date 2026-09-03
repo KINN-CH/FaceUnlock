@@ -696,6 +696,20 @@ final class AppState: ObservableObject {
         // 권한이나 등록이 안 끝났으면 어차피 인식을 못 한다. 표시등만 켜는
         // 꼴이 되므로 그때는 열지 않는다.
         guard setupBlocker() == nil else { return }
+        // 화면이 **이미** 꺼져 있으면 열지 않는다. 예열은 화면이 켜지기 전에
+        // 장치를 데워두려는 것인데, 꺼진 뒤에 열면 프레임이 한 장도 오지 않는
+        // 채로 장치만 붙잡고 있게 된다. 그 상태로 시스템이 자면 세션이 상해서
+        // 깨어난 뒤 감시견이 알아채고 장치를 다시 여는 데 800ms 가 더 든다 —
+        // 예열이 오히려 느리게 만든다. 실측 로그가 그대로 보여준다:
+        //   17:49:45.067 화면이 꺼져 카메라를 놓습니다
+        //   17:49:45.228 잠김 → 카메라를 잠깐 열어 예열합니다   ← 여기서 다시 염
+        //   (39초 절전)
+        //   17:50:24.722 첫 프레임이 오지 않습니다 — 장치를 다시 엽니다
+        // 화면이 켜지면 어차피 인식 창이 열리면서 장치를 연다.
+        guard anyDisplayAwake() else {
+            Log.app.info("화면이 이미 꺼져 있어 예열을 건너뜁니다")
+            return
+        }
         Log.app.info("카메라를 잠깐 열어 예열합니다")
         primeTimer?.invalidate()
         primeTimer = Timer.scheduledTimer(withTimeInterval: primeLimit,
