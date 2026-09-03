@@ -172,6 +172,10 @@
   footer { padding: 2.5rem 0 4rem; border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent); color: var(--tx-3); font-size: 0.85rem; }
   footer .links { display: flex; flex-wrap: wrap; gap: 1.1rem; margin-bottom: 1.25rem; }
   footer p + p { margin-top: 0.6rem; }
+  /* 만든 사람. 아래 고지들과 같은 회색으로 묻히지 않게 한 단계 밝게 둔다. */
+  footer .byline { color: var(--tx-2); font-size: 0.95rem; margin-bottom: 1.25rem; }
+  footer .byline b { color: var(--tx); font-weight: 600; }
+  footer .byline .handle { font-family: var(--mono); font-size: 0.88rem; }
 
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; }
@@ -331,6 +335,7 @@ make install && open -a /Applications/FaceUnlock.app</pre>
     <a href="https://github.com/KINN-CH/FaceUnlock/blob/main/SECURITY.md">Security</a>
     <a href="https://github.com/KINN-CH/FaceUnlock/blob/main/LICENSE">MIT License</a>
   </div>
+  <p class="byline">Built by <b>Cheolho Kim · 김철호</b> — <a class="handle" href="https://github.com/KINN-CH">@KINN-CH</a></p>
   <p>Provided with no warranty of any kind.</p>
   <p>Apple, Mac, MacBook, macOS, Face ID and Touch ID are trademarks of Apple Inc. This project is not affiliated with, endorsed by, or sponsored by Apple Inc.</p>
   <p>Face recognition uses ArcFace weights from InsightFace, which are licensed for non-commercial research use only and are downloaded separately at install time.</p>
