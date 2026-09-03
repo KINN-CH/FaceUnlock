@@ -1,6 +1,7 @@
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import QuartzCore
 
 /// 잠금화면에 비밀번호를 주입해 실제로 잠금을 푼다.
 ///
@@ -38,8 +39,12 @@ enum Unlocker {
     private static let aKey: CGKeyCode = 0
 
     /// Cmd+A 가 먹지 않았을 때를 대비한 지우개 횟수.
-    /// 화면을 깨우려고 키보드를 두드린 정도는 보통 열 자 남짓이라 넉넉하다.
-    private static let clearBackspaces = 32
+    ///
+    /// 예전에는 32 번이었다. 한 번에 5ms 씩이라 그것만 160ms 였고, 그 시간이
+    /// 그대로 "얼굴은 알아봤는데 안 열리는" 체감 지연으로 갔다. 지금은 아래
+    /// [clearPasswordField] 에서 Cmd+A 를 **두 번** 보내 첫 키가 칸을 깨우는 데
+    /// 쓰여 버리는 경우까지 덮으므로, 이 보험이 실제로 쓰일 일은 거의 없다.
+    private static let clearBackspaces = 8
 
     /// 잠금 해제를 시도한다. 실패하면 1회만 재시도하고 그만둔다.
     /// 무한 재시도는 계정 잠금으로 이어질 수 있다.
@@ -60,8 +65,20 @@ enum Unlocker {
             return .failure(.noPassword)
         }
 
-        wakeDisplay()
-        Thread.sleep(forTimeInterval: 0.2)
+        let started = CACurrentMediaTime()
+
+        // 덮개를 열어 들어온 경우처럼 화면이 이미 켜져 있으면 깨울 것이 없다.
+        // 예전에는 무조건 caffeinate 를 띄우고 0.2초를 기다렸는데, 그 0.2초는
+        // 사용자가 눈앞에서 그대로 세는 시간이다. 그리고 얼굴이 일치했다는 건
+        // 카메라가 프레임을 받고 있었다는 뜻이라 화면이 켜져 있는 쪽이 흔하다.
+        if anyDisplayAwake() {
+            // 그래도 아주 짧게는 둔다. 켜졌다는 신호와 잠금화면이 키를 받을
+            // 준비가 끝나는 시점이 정확히 같지는 않다.
+            Thread.sleep(forTimeInterval: 0.05)
+        } else {
+            wakeDisplay()
+            Thread.sleep(forTimeInterval: 0.2)
+        }
 
         // ── 마지막 안전 확인. 깨우는 사이에 사용자가 직접 풀었을 수 있다. ──
         guard LockMonitor.screenIsLockedNow() else {
@@ -81,6 +98,9 @@ enum Unlocker {
             return .failure(.eventCreationFailed)
         }
 
+        // 여기까지가 사용자가 기다리는 구간이다. 느리다는 말이 나오면 이 숫자부터 본다.
+        Log.unlock.info("주입 완료 \(Int((CACurrentMediaTime() - started) * 1000))ms")
+
         Thread.sleep(forTimeInterval: 0.8)
         if !LockMonitor.screenIsLockedNow() {
             Log.unlock.info("잠금 해제 성공")
@@ -98,6 +118,21 @@ enum Unlocker {
     }
 
     // MARK: 디스플레이 깨우기
+
+    /// 켜져 있는 디스플레이가 하나라도 있는가.
+    ///
+    /// 판정이 안 되면 "켜져 있다" 가 아니라 **"꺼져 있다"** 로 센다. 여기서
+    /// 틀리면 꺼진 화면에 키를 쏘아 비밀번호가 통째로 허공으로 가므로,
+    /// 모르겠으면 깨우고 기다리는 쪽이 맞다.
+    /// (같은 판정이 [CameraSession] 과 [AppState] 에도 있는데, 그쪽은 "복구를
+    ///  건너뛰지 않는" 것이 목적이라 모를 때의 기본값이 반대다.)
+    private static func anyDisplayAwake() -> Bool {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return false }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return false }
+        return ids.prefix(Int(count)).contains { CGDisplayIsAsleep($0) == 0 }
+    }
 
     /// 화면이 꺼져 있으면 키 이벤트가 잠금화면까지 닿지 않는다.
     private static func wakeDisplay() {
@@ -181,6 +216,11 @@ enum Unlocker {
     /// 잠금화면에는 비밀번호 칸 말고 포커스를 받을 것이 없으므로 Cmd+A 가
     /// 엉뚱한 곳에 걸릴 일도 없다.
     private static func clearPasswordField(source: CGEventSource) {
+        // Cmd+A 를 두 번 보낸다. 화면이 막 켜진 직후에는 첫 키 하나가 비밀번호
+        // 칸을 띄우고 포커스를 주는 데 쓰이고 사라진다 — 그래서 예전에는 첫
+        // Cmd+A 가 헛돌고 뒤의 Backspace 32 번에 기대야 했다. 두 번째는 포커스가
+        // 잡힌 뒤에 닿으므로, 칸에 무엇이 몇 자 들어 있든 한 번에 지워진다.
+        tap(source: source, key: aKey, flags: .maskCommand)
         tap(source: source, key: aKey, flags: .maskCommand)
         tap(source: source, key: deleteKey)
         for _ in 0..<clearBackspaces {
