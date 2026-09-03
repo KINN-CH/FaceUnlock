@@ -7,8 +7,8 @@ BUNDLE_ID  := io.github.kinnch.FaceUnlock
 # 여기 값이 각인된다. 예전에는 plist 에 직접 적혀 있어서, 태그만 v0.1.1 로
 # 올리고 plist 는 0.1.0 인 채로 배포되는 일이 실제로 있었다.
 # 릴리스 절차: 이 두 줄을 올린다 → make dmg → git tag v$(VERSION)
-VERSION    := 0.2.1
-BUILD_NUM  := 16
+VERSION    := 0.2.2
+BUILD_NUM  := 17
 TARGET     := arm64-apple-macos14.0
 
 BUILD_DIR  := build
