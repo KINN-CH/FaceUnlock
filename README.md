@@ -25,6 +25,8 @@ It all runs on the machine — your face never leaves your Mac.
 
 ### [⬇︎ Download the latest DMG](https://github.com/KINN-CH/FaceUnlock/releases/latest)
 
+**[▶︎ 설치 가이드 영상 · Watch the install guide](https://youtu.be/3cr4gCYPvxY)**
+
 **[English](#english) · [한국어](#한국어) · [Website](https://kinn-ch.github.io/FaceUnlock/)**
 
 </div>
@@ -113,6 +115,9 @@ Provided with no warranty of any kind. See [LICENSE](LICENSE).
 ## Install
 
 ### From the DMG
+
+**[▶︎ Watch the install guide (video)](https://youtu.be/3cr4gCYPvxY)** — the whole thing, start
+to finish, if you would rather follow along than read.
 
 Download `FaceUnlock.dmg` from
 [Releases](https://github.com/KINN-CH/FaceUnlock/releases) and open it. Drag the
@@ -457,6 +462,9 @@ Face ID가 적외선 점 3만 개로 얼굴의 입체를 읽는 것과 달리, �
 ## 설치
 
 ### DMG로 설치하기
+
+**[▶︎ 설치 가이드 영상 보기](https://youtu.be/3cr4gCYPvxY)** — 글로 읽는 것보다 따라 하는 게
+편하시면 이 영상 하나로 처음부터 끝까지 됩니다.
 
 [릴리스](https://github.com/KINN-CH/FaceUnlock/releases)에서 `FaceUnlock.dmg`를
 받아 엽니다. 창 안내대로 앱을 `Applications`로 드래그한 다음,
