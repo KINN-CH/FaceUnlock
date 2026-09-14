@@ -820,6 +820,26 @@ final class AppState: ObservableObject {
                         self.status = .failed(Unlocker.Failure.stillLocked.localizedDescription)
                     }
 
+                case .failure(.notLocked):
+                    // **실패가 아니다.** `.notLocked` 는 "주입하려고 보니 화면이
+                    // 이미 열려 있더라" 는 뜻이고, 그건 우리가 원하던 결과다.
+                    // 사용자가 할 일도 없다. 그런데 예전에는 이것도 아래
+                    // `.failure(let error)` 로 떨어져서 메뉴바에 빨간
+                    // "잠금 해제 실패 — 화면이 잠겨 있지 않습니다" 가 떴다.
+                    //
+                    // 이게 자주 뜬 경로는 헛재시도였다. 주입 → (해제 확인이
+                    // 한 번뿐이라) 아직 잠김으로 판단 → 재시도 → 재시도의
+                    // 진입 가드가 그 사이 열린 화면을 보고 `.notLocked`.
+                    // 즉 **해제에 성공한 바로 그 순간에** 실패라고 알렸다.
+                    // 2026-09-09 09:07 로그가 그 모양이다
+                    // (22.422 재시도 → 22.532 화면 해제됨 → 22.828 주입 중단).
+                    //
+                    // 확인 방식은 이미 고쳤지만, 사용자가 직접 비밀번호를 치는
+                    // 등 다른 이유로도 같은 상황은 언제든 생긴다. 그때도 실패로
+                    // 보고할 이유는 없다.
+                    self.injectionFailures = 0
+                    self.refreshStatus()
+
                 case .failure(let error):
                     self.status = .failed(error.localizedDescription)
                 }
