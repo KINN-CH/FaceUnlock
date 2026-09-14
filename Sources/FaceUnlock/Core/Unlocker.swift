@@ -49,6 +49,13 @@ enum Unlocker {
     /// 쓰여 버리는 경우까지 덮으므로, 이 보험이 실제로 쓰일 일은 거의 없다.
     private static let clearBackspaces = 8
 
+    /// 주입 뒤 해제를 기다리는 최대 시간과 확인 간격.
+    ///
+    /// 창을 1.6초로 잡은 근거: 실측에서 loginwindow 가 0.93초 걸린 적이 있다.
+    /// 여유가 없으면 헛재시도가 나가고, 헛재시도는 0.9초를 그냥 더 쓴다.
+    private static let unlockConfirmWindow: CFTimeInterval = 1.6
+    private static let unlockConfirmPollInterval: CFTimeInterval = 0.05
+
     /// 잠금 해제를 시도한다. 실패하면 1회만 재시도하고 그만둔다.
     /// 무한 재시도는 계정 잠금으로 이어질 수 있다.
     ///
@@ -113,11 +120,27 @@ enum Unlocker {
         // 여기까지가 사용자가 기다리는 구간이다. 느리다는 말이 나오면 이 숫자부터 본다.
         Log.unlock.info("주입 완료 \(Int((CACurrentMediaTime() - started) * 1000))ms")
 
-        Thread.sleep(forTimeInterval: 0.8)
-        if !LockMonitor.screenIsLockedNow() {
-            Log.unlock.info("잠금 해제 성공")
-            return .success(())
-        }
+        // 해제됐는지 **짧게 자주** 확인한다. 한 번에 0.8초를 자고 딱 한 번
+        // 보던 때가 있었는데, 그러면 두 가지가 동시에 나빠진다.
+        //   1. 0.4초 만에 풀려도 사용자는 0.8초를 다 기다린다.
+        //   2. loginwindow 가 0.8초를 아주 조금 넘기면 헛재시도가 나간다.
+        // 2026-09-09 09:07 로그가 정확히 2번이었다. 주입 완료 21.604 →
+        // 0.8초 뒤 확인은 아직 잠김 → 22.422 "1회 재시도" → 그런데 실제
+        // 해제는 22.532(주입 후 0.93초) → 22.828 "잠금 상태가 아님 — 주입
+        // 중단". 0.13초 차이로 재시도가 나가서 끝에 0.9초가 더 붙었다.
+        //
+        // 그래서 대기 창은 넓히고(1.6초) 확인 간격은 좁혔다(0.05초).
+        // 빠를 때는 더 빨리 끝나고, 느릴 때는 헛재시도를 하지 않는다.
+        let deadline = CACurrentMediaTime() + unlockConfirmWindow
+        repeat {
+            Thread.sleep(forTimeInterval: unlockConfirmPollInterval)
+            if !LockMonitor.screenIsLockedNow() {
+                let elapsed = Int((CACurrentMediaTime() - started) * 1000)
+                // `started` 는 unlock() 진입 시점이다 — 위 "주입 완료" 와 같은 기준.
+                Log.unlock.info("잠금 해제 성공 (총 \(elapsed)ms)")
+                return .success(())
+            }
+        } while CACurrentMediaTime() < deadline
 
         guard allowRetry else {
             Log.unlock.error("재시도 후에도 잠금 상태 — 중단")

@@ -95,6 +95,8 @@ final class AuthSession {
     private var facesInTick = 0
     private var embedsInTick = 0
     private var bestScoreInTick: Float?
+    private var rejectionsInTick: [String: Int] = [:]
+    private var lastRejectedGeometry: String?
 
     init(roster: FaceRoster, model: EmbeddingModel, config: Config) {
         self.roster = roster
@@ -143,9 +145,17 @@ final class AuthSession {
 
         facesInTick += 1
 
-        guard detector.passesQualityGate(face, in: pixelBuffer) else {
+        if let rejection = detector.qualityRejection(face, in: pixelBuffer) {
             report(.faceDetected(score: nil))
-            consecutiveMatches = 0
+            // 연속 카운트를 **버리지 않는다.** 흐리거나 잘린 프레임은 "다른
+            // 사람" 이라는 증거가 아니라 아무 증거도 아니다. 여기서 버리면
+            // 좋은 프레임 사이에 나쁜 프레임 하나만 끼어도 처음부터 다시
+            // 세게 되고, 3회를 채우려면 사실상 연속 5~6장이 전부 깨끗해야
+            // 한다. 조금만 어두워져도 그 확률이 급락한다 — 2026-09-08 의
+            // 8.6초 해제가 그 경우였다. 바꿔치기는 "얼굴이 사라지면 초기화"
+            // 와 "일치하지 않는 임베딩이 나오면 초기화" 가 이미 막는다.
+            rejectionsInTick[rejection.label, default: 0] += 1
+            lastRejectedGeometry = detector.geometryNote(face, in: pixelBuffer)
             return
         }
 
@@ -194,8 +204,9 @@ final class AuthSession {
 
     private func identify(face: VNFaceObservation, in pixelBuffer: CVPixelBuffer) {
         guard let result = embedAndMatch(face: face, in: pixelBuffer) else {
+            // 정렬이나 추론이 실패한 것도 판정이 아니다 — 위와 같은 이유로
+            // 연속 카운트를 유지한다.
             report(.faceDetected(score: nil))
-            consecutiveMatches = 0
             return
         }
 
@@ -239,7 +250,16 @@ final class AuthSession {
     private func flushTickIfDue(_ now: CFTimeInterval) {
         guard now - tickStartedAt >= 1 else { return }
         let best = bestScoreInTick.map { String(format: "%.3f", $0) } ?? "-"
-        let line = "프레임 \(framesInTick), 얼굴 \(facesInTick), 임베딩 \(embedsInTick), 최고 \(best)"
+        var line = "프레임 \(framesInTick), 얼굴 \(facesInTick), 임베딩 \(embedsInTick), 최고 \(best)"
+        if !rejectionsInTick.isEmpty {
+            let detail = rejectionsInTick.sorted { $0.key < $1.key }
+                .map { "\($0.key) \($0.value)" }
+                .joined(separator: ", ")
+            line += " / 버림 \(detail)"
+            if let geometry = lastRejectedGeometry {
+                line += " [\(geometry)]"
+            }
+        }
         Log.face.info("인식 진행 — \(line, privacy: .public)")
         tickStartedAt = now
         resetTickCounters()
@@ -250,6 +270,8 @@ final class AuthSession {
         facesInTick = 0
         embedsInTick = 0
         bestScoreInTick = nil
+        rejectionsInTick.removeAll(keepingCapacity: true)
+        lastRejectedGeometry = nil
     }
 
     // MARK: 콜백
