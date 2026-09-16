@@ -146,6 +146,30 @@ final class AppState: ObservableObject {
     /// 예전에는 이 알림을 안 듣고 2초마다 디스플레이 상태를 물어봤다.
     private var sleepObserver: NSObjectProtocol?
     private var systemSleepObserver: NSObjectProtocol?
+    /// 잠금 화면(비밀번호 칸)이 **그려지는** 순간 — 화면보호기를 걷어낼 때.
+    ///
+    /// `com.apple.screenLockUIIsShown` 은 loginwindow 가 비밀번호 칸을 띄울
+    /// 때마다 보내는 배포 알림이다. 화면이 껐다 켜질 때도 오지만 그때는
+    /// `screensDidWake` 가 먼저 창을 열어두어 [openWindow] 가 중복을 거른다.
+    ///
+    /// 이걸 듣지 않으면 **화면보호기로 잠긴 경우** 얼굴 인식이 통째로 죽는다.
+    /// 화면보호기는 화면을 끄지 않으므로 "화면이 켜짐" 사건이 영영 안 온다.
+    /// 실측(09/16 12:42): 화면보호기 시작 → 0.5초 뒤 잠김(예열만 됨) →
+    /// 7.7초 뒤 사용자가 마우스를 움직여 비밀번호 칸이 뜸 → 아무 일도 없음 →
+    /// 20초 뒤 직접 입력. macOS 26 에서는 `com.apple.screensaver.didstop`
+    /// 마저 **잠금이 풀린 뒤에** 오므로 그걸로는 잡을 수 없다.
+    private var lockUIObserver: NSObjectProtocol?
+    /// 마지막으로 잠긴 시각. [handleLockUIShown] 이 잠금 자체에 딸려온
+    /// 알림과 사용자가 돌아와서 뜬 알림을 가르는 기준.
+    private var lockedAt: CFTimeInterval?
+    /// 잠긴 뒤 이 시간 안에 뜬 잠금 화면은 잠금의 일부로 본다.
+    ///
+    /// 직접 잠그면(⌃⌘Q) `screenIsLocked` 뒤 79~100ms 만에 비밀번호 칸이
+    /// 따라온다. 사용자가 돌아와서 뜨는 것은 훨씬 뒤다 — 화면보호기 실측
+    /// 7.7초, 화면이 꺼졌다 켜지면 분 단위. 이 값이 짧으면 느린 기계에서
+    /// 직접 잠근 직후 창이 열려 "잠그자마자 도로 풀림" 이 되살아나므로
+    /// 넉넉히 잡는다.
+    private let lockUIGrace: CFTimeInterval = 2
     /// 예열을 끊는 타이머. [primeLimit] 참조.
     private var primeTimer: Timer?
 
@@ -180,7 +204,7 @@ final class AppState: ObservableObject {
         lockMonitor.onUnlock = { [weak self] in self?.handleScreenUnlocked() }
         lockMonitor.start()
 
-        // 창을 여닫는 세 가지 사건. 이제 이것 말고는 카메라를 켜는 길이 없다.
+        // 창을 여닫는 네 가지 사건. 이제 이것 말고는 카메라를 켜는 길이 없다.
         let center = NSWorkspace.shared.notificationCenter
         wakeObserver = center.addObserver(
             forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -197,6 +221,10 @@ final class AppState: ObservableObject {
         systemSleepObserver = center.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.handleSystemWillSleep() }
+            }
+        lockUIObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Self.lockUIShownNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handleLockUIShown() }
             }
 
         settings.$faceUnlockEnabled
@@ -393,10 +421,13 @@ final class AppState: ObservableObject {
     /// 잠긴 뒤 macOS 는 5~6초 안에 화면을 끄므로(실측은 [AwakeWindow] 참조),
     /// 다시 쓰려고 키를 누르거나 트랙패드를 만지면 그때 화면이 켜지고
     /// [handleWakeEvent] 가 창을 연다. 즉 아무것도 잃지 않고 몇 초만 늦어진다.
+    /// 화면보호기로 잠겨 화면이 꺼진 적이 없으면 화면보호기를 걷어내 비밀번호
+    /// 칸이 뜨는 순간 [handleLockUIShown] 이 연다.
     ///
     /// 잠그자마자 바로 얼굴로 풀고 싶다면 [opensWindowOnManualLock] 를 true 로
     /// 바꾸면 예전 동작으로 돌아간다.
     private func handleScreenLocked() {
+        lockedAt = CACurrentMediaTime()
         guard settings.faceUnlockEnabled else { return }
         guard opensWindowOnManualLock else {
             Log.app.info("잠김 — 화면이 다시 켜지면 인식을 시작합니다")
@@ -412,7 +443,7 @@ final class AppState: ObservableObject {
         openWindow("잠김")
     }
 
-    /// 화면이 켜졌거나 시스템이 절전에서 깨어났다 — 창을 열 유일한 사건.
+    /// 화면이 켜졌거나 시스템이 절전에서 깨어났다 — 창을 여는 사건.
     ///
     /// 두 알림을 모두 듣는다. 덮개를 열거나 시스템 절전에서 복귀할 때는
     /// `screensDidWake` 가 안 오고 `didWake` 만 오는 경우가 있고, 반대로 화면만
@@ -429,6 +460,29 @@ final class AppState: ObservableObject {
         guard setupBlocker() == nil else { return }
         openWindow(reason)
     }
+
+    /// 비밀번호 칸이 떴다 — [handleWakeEvent] 와 같은 뜻이되, 잠기는 순간에
+    /// 딸려오는 것은 거른다. 배경은 [lockUIObserver] 에 적어두었다.
+    ///
+    /// 직접 잠근 직후의 알림까지 창을 열면 [handleScreenLocked] 가 막아둔
+    /// "잠그자마자 도로 풀림" 이 되살아난다. 잠긴 지 [lockUIGrace] 안에 온
+    /// 것은 잠금 자체의 일부로 보고 넘긴다.
+    private func handleLockUIShown() {
+        guard settings.faceUnlockEnabled else { return }
+        if let lockedAt, CACurrentMediaTime() - lockedAt < lockUIGrace {
+            Log.app.info("잠금 직후의 잠금 화면 — 돌아오면 인식을 시작합니다")
+            return
+        }
+        // 화면이 아직 꺼져 있으면 켜질 때 [handleWakeEvent] 가 연다. 여기서
+        // 먼저 열면 [retryTick] 이 2초 뒤 "화면이 꺼짐" 으로 닫았다가 다시
+        // 여는 껐다 켜기가 생긴다. 실측으로는 늘 화면이 켜진 뒤(80~750ms) 에
+        // 오지만 그 순서를 믿고 짜지는 않는다.
+        guard anyDisplayAwake() else { return }
+        handleWakeEvent("잠금 화면이 표시됨")
+    }
+
+    /// loginwindow 가 비밀번호 칸을 그릴 때 보내는 배포 알림.
+    nonisolated static let lockUIShownNotification = Notification.Name("com.apple.screenLockUIIsShown")
 
     // MARK: 창 여닫기
 
@@ -660,6 +714,7 @@ final class AppState: ObservableObject {
     }
 
     private func handleScreenUnlocked() {
+        lockedAt = nil
         closeWindow("잠금이 풀림")
         primeTimer?.invalidate()
         primeTimer = nil

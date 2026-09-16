@@ -244,7 +244,8 @@ can remove it there with `−`.
 ## How it works
 
 ```
-display wakes while locked (screensDidWake · didWake)
+display wakes, or the lock screen reappears, while locked
+  (screensDidWake · didWake · screenLockUIIsShown)
   → recognition window opens — camera starts (only while the window is open)
   → Vision face detection + 5-point landmarks (20fps)
   → quality gate (size · edge margin · sharpness)
@@ -270,10 +271,13 @@ verified once more right after a blink is detected, since the face could change
 while the eyes are shut.
 
 **The camera only runs when an unlock is actually possible.** The one moment
-this app has work to do is *the display waking while the screen is locked*. So
-the trigger is the event — "did the display wake?" — not the state, "is a
-display awake?". The event opens a recognition window; success, failure, the
-timeout, or the display sleeping closes it. **Outside that window no camera and
+this app has work to do is *the lock screen coming back in front of you* — the
+display waking while locked, or the screen saver being dismissed to reveal the
+password field (the display never slept in that case, so it's a separate
+event). So the trigger is the event — "did the display wake?", "did the lock
+screen appear?" — not the state, "is a display awake?". The event opens a
+recognition window; success, failure, the timeout, or the display sleeping
+closes it. **Outside that window no camera and
 no timer runs at all.** Nothing is lost by sitting idle: when the display sleeps
 the camera sleeps with it and stops delivering frames anyway.
 
@@ -586,7 +590,8 @@ security delete-generic-password -s io.github.kinnch.FaceUnlock   # 항목 수�
 ## 동작 방식
 
 ```
-잠긴 채로 화면이 켜짐 (screensDidWake · didWake)
+잠긴 채로 화면이 켜지거나 잠금 화면이 다시 뜸
+  (screensDidWake · didWake · screenLockUIIsShown)
   → 인식 창 열림 — 카메라 시작 (창이 열려 있는 동안에만)
   → Vision 얼굴 검출 + 5점 랜드마크 (20fps)
   → 품질 게이트 (크기 · 가장자리 · 선명도)
@@ -610,10 +615,12 @@ security delete-generic-password -s io.github.kinnch.FaceUnlock   # 항목 수�
 번 더 확인합니다. 눈을 감고 있는 사이에 얼굴이 바뀔 수 있으니까요.
 
 **카메라는 잠금을 풀 만한 순간에만 켜집니다.** 이 앱이 일해야 하는 때는
-*잠긴 채로 화면이 켜지는 그 순간*뿐입니다. 그래서 "잠겨 있고 화면이 켜져
-**있는가**"라는 상태가 아니라 "화면이 켜**졌는가**"라는 사건으로 판단합니다.
-사건이 오면 인식 창을 열고, 성공·실패·제한 시간·화면 꺼짐 중 하나가 오면
-닫습니다. **창 밖에서는 카메라도 타이머도 돌지 않습니다.** 화면이 자면 카메라도
+*잠금 화면이 눈앞에 다시 나타나는 그 순간*뿐입니다 — 잠긴 채로 화면이
+켜지거나, 화면보호기를 걷어내 비밀번호 칸이 뜨거나(이때는 화면이 꺼진 적이
+없어 별도의 사건입니다). 그래서 "잠겨 있고 화면이 켜져 **있는가**"라는 상태가
+아니라 "화면이 켜**졌는가**", "잠금 화면이 떴**는가**"라는 사건으로
+판단합니다. 사건이 오면 인식 창을 열고, 성공·실패·제한 시간·화면 꺼짐 중
+하나가 오면 닫습니다. **창 밖에서는 카메라도 타이머도 돌지 않습니다.** 화면이 자면 카메라도
 같이 자서 프레임이 아예 오지 않으니, 그동안 아무것도 안 돌려도 잃는 게 없습니다.
 
 검출과 깜빡임 감지는 20fps로 돌려 짧은 깜빡임을 놓치지 않고, 무거운 임베딩만
