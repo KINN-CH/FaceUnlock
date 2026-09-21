@@ -157,7 +157,8 @@ final class CameraSession: NSObject {
     /// 감시견은 프레임이 *끊겼을 때만* 장치를 다시 연다. 그런데 잠금화면에서
     /// 냉시동한 세션은 초당 13~15장을 주면서 평균 밝기 0을 15초 내내 유지했다
     /// — 감시견이 보기에는 완벽히 건강한 스트림이라 아무 일도 하지 않았고,
-    /// 사용자에게는 "그냥 안 된다" 로만 보였다. 최소한 말은 해야 한다.
+    /// 사용자에게는 "그냥 안 된다" 로만 보였다. 여기서 한 번 다시 열고,
+    /// 그래도 안 되면 최소한 말은 해야 한다.
     /// 진단 모드. `defaults write io.github.kinnch.FaceUnlock diagnostics -bool YES`
     ///
     /// 켜면 새까만 프레임을 만났을 때 바로 포기하지 않고, 60초 동안 매초
@@ -169,7 +170,17 @@ final class CameraSession: NSObject {
     private var blackProbeResets = 0
 
     private var blackTicks = 0
+    /// 이만큼 연속으로 새까만 1초 구간이 지나면 장치를 한 번 다시 연다.
+    private let blackReopenAfterTicks = 2
+    /// 다시 열고도 이만큼 더 새까맣면 포기하고 비밀번호로 넘긴다.
     private let blackTickLimit = 4
+    /// 검은 프레임 때문에 장치를 다시 연 횟수.
+    ///
+    /// [resetAttempts] 와 **따로** 센다. 검은 것도 프레임이라 [usableBurstFrames]
+    /// 가 그 예산을 매번 0 으로 되돌리고, 그러면 "1/3" 을 무한히 반복한다
+    /// (08-28 실측). 이 칸은 밝은 프레임이 오거나 새로 시작할 때만 0 이 된다.
+    private var blackReopens = 0
+    private let maxBlackReopens = 1
     private var failingOnBlackFrames = false
 
     var isRunning: Bool { session.isRunning }
@@ -272,6 +283,7 @@ final class CameraSession: NSObject {
             self.shouldBeRunning = true
             self.restartAttempts = 0
             self.resetAttempts = 0
+            self.blackReopens = 0
             self.startOnQueue()
         }
     }
@@ -748,18 +760,40 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
 
         // 화면이 자면 카메라도 자고 프레임도 까매진다. 그건 고장이 아니다.
-        guard Self.anyDisplayAwake(), mean == 0 else { blackTicks = 0; return }
+        guard Self.anyDisplayAwake(), mean == 0 else {
+            blackTicks = 0
+            // 밝은 프레임이 한 구간이라도 왔으면 장치는 멀쩡한 것이다.
+            if mean != 0 { blackReopens = 0 }
+            return
+        }
         blackTicks += 1
+
+        // 시스템 절전에서 깨어난 직후의 검은 프레임은 장치를 한 번 다시 열면
+        // 뚫린다. 일주일치 로그에서 카메라 사고는 셋뿐인데 셋 다 powerd 의
+        // "Wake from Deep Idle" 직후였다 — 깨어난 지 14ms 만에 연 장치는
+        // 잠깐 먹통이다. 첫 프레임이 아예 안 오는 쪽(09-17 21:31, 09-21 15:22)
+        // 은 감시견이 다시 열어서 풀렸고(15:22 는 3.7초 만에 해제됨), 프레임은
+        // 오는데 새까만 쪽(09-21 16:09)만 여기서 곧장 포기해 비밀번호로
+        // 넘겼다. 같은 원인이니 같은 처방이다.
+        //
+        // 08-28 에는 다시 열어도 안 뚫렸다(두 번 열고도 밝기 0, 16:21:54·
+        // 16:21:58). 그때의 검은 프레임은 포맷 고정이 원인이었고, 그건 이미
+        // 걷어냈다. 그래도 될 때까지 열지는 않는다 — 한 번만 열고, 그래도
+        // 새까맣면 사실대로 알린다. 잠기기 전부터 장치를 붙잡고 있는 것
+        // (AppState.warmCamera)은 그대로 첫째 대책이다.
+        if !Self.diagnostics, blackReopens < maxBlackReopens {
+            guard blackTicks >= blackReopenAfterTicks else { return }
+            blackTicks = 0
+            blackReopens += 1
+            Log.camera.error("화면은 켜져 있는데 새까만 프레임만 옵니다 (\(Self.environmentSummary(), privacy: .public)) — 장치를 다시 엽니다")
+            hardReset()
+            return
+        }
+
         guard blackTicks >= blackTickLimit else { return }
         blackTicks = 0
         guard !failingOnBlackFrames else { return }
         failingOnBlackFrames = true
-        // 여기서 장치를 다시 열어봤다. 안 뚫린다 — 재개방 두 번을 하고도
-        // 밝기 0이 계속됐다(16:21:54, 16:21:58 실측). 게다가 검은 것도
-        // 프레임이라 복구 예산이 매번 0으로 되돌아가서 "1/3" 을 무한히
-        // 반복했다. 그래서 재개방하지 않고 한 번만 사실대로 남긴다.
-        // 이 상태에 빠지지 않는 것이 유일한 대책이고, 그건 잠기기 전부터
-        // 장치를 붙잡고 있는 것이다 — AppState.warmCamera 참조.
         guard !Self.diagnostics else {
             blackProbeStartedAt = now
             blackProbeResets = 0
@@ -767,8 +801,8 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
             dumpState(label: "검게 나온 직후")
             return
         }
-        Log.camera.error("화면은 켜져 있는데 새까만 프레임만 옵니다 — 이번 잠금은 비밀번호로 열어야 합니다")
-        // 기다려봐야 소용없다는 걸 아는데 20초 제한시간까지 세워둘 이유가
+        Log.camera.error("장치를 다시 열고도 새까만 프레임만 옵니다 — 이번 잠금은 비밀번호로 열어야 합니다")
+        // 더 기다려봐야 소용없다는 걸 아는데 20초 제한시간까지 세워둘 이유가
         // 없다. 바로 알리고 비밀번호로 넘긴다.
         onFailure?(T("카메라가 검은 화면만 보냅니다 — 비밀번호로 로그인하세요.",
                      "The camera is only sending black frames — log in with your password."))
