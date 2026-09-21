@@ -172,6 +172,8 @@ final class AppState: ObservableObject {
     private let lockUIGrace: CFTimeInterval = 2
     /// 예열을 끊는 타이머. [primeLimit] 참조.
     private var primeTimer: Timer?
+    /// `willSleep` 을 받은 뒤 아직 깨어나지 않았는가. [primeCamera] 가 본다.
+    private var systemIsSleeping = false
 
     /// 이번 시도를 시작한 시각. 카메라 감시용.
     private var attemptStartedAt: CFTimeInterval?
@@ -450,6 +452,10 @@ final class AppState: ObservableObject {
     /// 껐다 켜면 `didWake` 는 안 온다. 하나를 놓치면 그 상황에서 얼굴 인식이
     /// 통째로 죽으므로 둘 다 듣고, 창 쪽에서 중복을 걸러낸다.
     private func handleWakeEvent(_ reason: String) {
+        // 절전이 취소돼 `didWake` 없이 화면만 다시 켜지는 경우도 있다
+        // (17:40:34 willSleep → 36.4 화면 켜짐, "Entering Sleep" 없음).
+        // 어느 쪽이든 깨어난 것이니 여기서 푼다.
+        systemIsSleeping = false
         guard settings.faceUnlockEnabled else { return }
         guard lockMonitor.isLocked || LockMonitor.screenIsLockedNow() else { return }
         // 주입이 진행 중이면 끼어들지 않는다. `performUnlock` 이 세션을 먼저
@@ -706,6 +712,7 @@ final class AppState: ObservableObject {
     /// 안전하다. 덮개를 열면 시스템이 통째로 깨면서 카메라도 재초기화되고,
     /// 그때의 냉시동은 실제로 성공한다(16:16:16 — 얼굴 일치 → 잠금 해제).
     private func handleSystemWillSleep() {
+        systemIsSleeping = true
         closeWindow("시스템 절전")
         primeTimer?.invalidate()
         primeTimer = nil
@@ -715,6 +722,7 @@ final class AppState: ObservableObject {
 
     private func handleScreenUnlocked() {
         lockedAt = nil
+        systemIsSleeping = false
         closeWindow("잠금이 풀림")
         primeTimer?.invalidate()
         primeTimer = nil
@@ -763,6 +771,15 @@ final class AppState: ObservableObject {
         // 화면이 켜지면 어차피 인식 창이 열리면서 장치를 연다.
         guard anyDisplayAwake() else {
             Log.app.info("화면이 이미 꺼져 있어 예열을 건너뜁니다")
+            return
+        }
+        // 시스템이 자러 가는 길이어도 열지 않는다. `willSleep` 이 잠금보다
+        // 먼저 오는데(17:40:41.734 willSleep → 41.982 잠김) 그 사이 CG 는
+        // 아직 화면이 켜져 있다고 해서 위 검사만으로는 못 거른다. 열어봤자
+        // 자는 시스템 위에서 세 번 재개방하고 "카메라가 응답하지 않습니다"
+        // 만 남긴다 (17:40:43~49 실측).
+        guard !systemIsSleeping else {
+            Log.app.info("시스템이 자러 가는 중이라 예열을 건너뜁니다")
             return
         }
         Log.app.info("카메라를 잠깐 열어 예열합니다")
