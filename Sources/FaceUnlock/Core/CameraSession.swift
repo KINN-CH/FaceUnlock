@@ -170,17 +170,27 @@ final class CameraSession: NSObject {
     private var blackProbeResets = 0
 
     private var blackTicks = 0
-    /// 이만큼 연속으로 새까만 1초 구간이 지나면 장치를 한 번 다시 연다.
+    /// 이만큼 연속으로 새까만 1초 구간이 지나면 장치를 처음 다시 연다.
     private let blackReopenAfterTicks = 2
-    /// 다시 열고도 이만큼 더 새까맣면 포기하고 비밀번호로 넘긴다.
+    /// 다시 열고도 이만큼 더 새까맣면 한 번 더 열고, 횟수가 다하면 포기한다.
     private let blackTickLimit = 4
     /// 검은 프레임 때문에 장치를 다시 연 횟수.
     ///
     /// [resetAttempts] 와 **따로** 센다. 검은 것도 프레임이라 [usableBurstFrames]
     /// 가 그 예산을 매번 0 으로 되돌리고, 그러면 "1/3" 을 무한히 반복한다
     /// (08-28 실측). 이 칸은 밝은 프레임이 오거나 새로 시작할 때만 0 이 된다.
+    ///
+    /// 두 번이면 2 + 1.6 + 4 + 1.6 + 4 ≈ 13초 안에 끝난다 — 인식 제한시간
+    /// (기본 20초) 안이다. 그 안에 안 뚫리면 이번 잠금은 비밀번호다.
     private var blackReopens = 0
-    private let maxBlackReopens = 1
+    private let maxBlackReopens = 2
+    /// 검은 프레임 뒤의 재개방은 장치를 더 오래 놓아 준다.
+    ///
+    /// 09-21 16:47 실측: 절전에서 깨어난 지 75ms 만에 연 장치가 새까맸고,
+    /// 2.5초 뒤 0.4초만 놓았다가 다시 열어도 그대로 새까맸다. "곧바로 다시
+    /// 잡으면 같은 상태가 된다" 는 [hardReset] 의 경험칙이 여기서는 0.4초로
+    /// 부족할 수 있다. 실패 경로에서만 드는 비용이라 넉넉히 잡는다.
+    private let blackReleaseDelay: TimeInterval = 1.0
     private var failingOnBlackFrames = false
 
     var isRunning: Bool { session.isRunning }
@@ -447,7 +457,7 @@ final class CameraSession: NSObject {
     ///
     /// `stopRunning()` + `startRunning()` 만으로는 이 상태를 못 벗어난다.
     /// 입력·출력을 떼고 구성을 처음부터 다시 해야 장치가 실제로 열린다.
-    private func hardReset() {
+    private func hardReset(releaseDelay: TimeInterval = 0.4) {
         guard !isResetting else { return }
         guard resetAttempts < maxResetAttempts else {
             Log.camera.error("장치를 다시 열지 못했습니다 — 포기")
@@ -478,8 +488,9 @@ final class CameraSession: NSObject {
 
         // 장치가 완전히 놓이기를 기다린다. 곧바로 다시 잡으면 같은 상태가 된다.
         // 0.4초면 충분하다 (0.7초에서 줄였다 — 잠금화면에서는 이 쉬는 시간이
-        // 곧 인증이 멈춰 있는 시간이다).
-        queue.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+        // 곧 인증이 멈춰 있는 시간이다). 검은 프레임 뒤에는 더 길게 —
+        // [blackReleaseDelay] 참조.
+        queue.asyncAfter(deadline: .now() + releaseDelay) { [weak self] in
             guard let self else { return }
             self.isResetting = false
             guard self.shouldBeRunning else { return }
@@ -778,15 +789,21 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         //
         // 08-28 에는 다시 열어도 안 뚫렸다(두 번 열고도 밝기 0, 16:21:54·
         // 16:21:58). 그때의 검은 프레임은 포맷 고정이 원인이었고, 그건 이미
-        // 걷어냈다. 그래도 될 때까지 열지는 않는다 — 한 번만 열고, 그래도
-        // 새까맣면 사실대로 알린다. 잠기기 전부터 장치를 붙잡고 있는 것
-        // (AppState.warmCamera)은 그대로 첫째 대책이다.
+        // 걷어냈다. 09-21 16:47 에는 깨어난 지 2.5초 만의 첫 재개방(0.4초
+        // 놓음)도 안 뚫렸다 — 깨어난 직후 카메라가 준비되는 데 그보다 오래
+        // 걸리는 것으로 보인다. 그래서 두 번까지, 사이를 벌리고 더 오래
+        // 놓아 준 뒤 다시 연다. 매번 장치 상태를 남겨 언제 뚫리는지(또는
+        // 끝내 안 뚫리는지) 기록이 쌓이게 한다. 잠기기 전부터 장치를
+        // 붙잡고 있는 것(AppState.warmCamera)은 그대로 첫째 대책이다 —
+        // 다만 시스템 절전은 그것도 놓게 만든다.
         if !Self.diagnostics, blackReopens < maxBlackReopens {
-            guard blackTicks >= blackReopenAfterTicks else { return }
+            let needed = blackReopens == 0 ? blackReopenAfterTicks : blackTickLimit
+            guard blackTicks >= needed else { return }
             blackTicks = 0
             blackReopens += 1
-            Log.camera.error("화면은 켜져 있는데 새까만 프레임만 옵니다 (\(Self.environmentSummary(), privacy: .public)) — 장치를 다시 엽니다")
-            hardReset()
+            Log.camera.error("화면은 켜져 있는데 새까만 프레임만 옵니다 (\(Self.environmentSummary(), privacy: .public)) — 장치를 다시 엽니다 (\(self.blackReopens)/\(self.maxBlackReopens))")
+            dumpState(label: "새까만 프레임, \(blackReopens)번째 재개방 직전")
+            hardReset(releaseDelay: blackReleaseDelay)
             return
         }
 
@@ -801,7 +818,8 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
             dumpState(label: "검게 나온 직후")
             return
         }
-        Log.camera.error("장치를 다시 열고도 새까만 프레임만 옵니다 — 이번 잠금은 비밀번호로 열어야 합니다")
+        Log.camera.error("장치를 \(self.maxBlackReopens)번 다시 열고도 새까만 프레임만 옵니다 — 이번 잠금은 비밀번호로 열어야 합니다")
+        dumpState(label: "새까만 프레임, 포기 직전")
         // 더 기다려봐야 소용없다는 걸 아는데 20초 제한시간까지 세워둘 이유가
         // 없다. 바로 알리고 비밀번호로 넘긴다.
         onFailure?(T("카메라가 검은 화면만 보냅니다 — 비밀번호로 로그인하세요.",
